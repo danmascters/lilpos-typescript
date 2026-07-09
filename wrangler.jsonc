@@ -1,0 +1,8 @@
+{
+  "name": "lilpos-typescript",
+  "compatibility_date": "2026-07-08",
+  "assets": {
+    "directory": ".",
+    "not_found_handling": "single-page-application"
+  }
+}
