@@ -539,8 +539,8 @@ button:disabled {
 }
 
 .timing-clock-btn .nav-svg {
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
 }
 
 .icon-pill .nav-svg {
@@ -1885,7 +1885,7 @@ button:disabled {
 }
 
 .asap-adjust-modal {
-  transform: scale(0.625);
+  transform: scale(0.9765625);
   transform-origin: center;
 }
 
