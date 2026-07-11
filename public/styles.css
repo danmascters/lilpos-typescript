@@ -69,8 +69,38 @@ button:disabled {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  padding: 0 10px 100px 10px;
   gap: 10px;
-  padding: 10px 10px 100px;
+}
+
+.mgr-cog-header {
+  position: relative;
+  height: 24px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+.mgr-cog-icon {
+  position: absolute;
+  top: 2px;
+  right: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  transition: color 0.12s;
+}
+
+.mgr-cog-icon:hover {
+  color: var(--accent-2);
 }
 
 .topbar {
@@ -1677,6 +1707,9 @@ button:disabled {
   flex: 0 0 34px;
   font-weight: 900;
   color: #172033;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .pizza-side-btn.active {
@@ -1692,6 +1725,30 @@ button:disabled {
 
 .pizza-top-row.whole-selected .pizza-side-btn {
   border-color: #fff;
+}
+
+.pizza-half-icon {
+  width: 28px;
+  height: 28px;
+  display: block;
+  flex-shrink: 0;
+}
+
+.pizza-half-fill {
+  fill: transparent;
+  transition: opacity 0.1s;
+}
+
+.pizza-side-btn.active .pizza-half-fill {
+  fill: transparent;
+  opacity: 1;
+}
+
+.pizza-half-icon circle {
+  fill: transparent;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  opacity: 0.9;
 }
 
 .pizza-notes-input {
@@ -2173,3 +2230,401 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* ─── Manager gear button ─────────────────────────────────── */
+.mgr-gear-btn {
+  border: 1px solid #475569;
+}
+.mgr-gear-btn.active {
+  border-color: var(--accent);
+  background: #1e293b;
+}
+
+/* ─── Manager PIN view ────────────────────────────────────── */
+.mgr-pin-view {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.mgr-pin-card {
+  background: #1e293b;
+  border-radius: 16px;
+  padding: 32px 28px;
+  width: min(340px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid #334155;
+}
+
+.mgr-pin-title {
+  margin: 0;
+  font-size: 22px;
+  color: #f1f5f9;
+}
+
+.mgr-pin-instruction {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.mgr-pin-display {
+  font-size: 28px;
+  letter-spacing: 14px;
+  color: #f1f5f9;
+  min-height: 44px;
+  padding: 6px 0;
+}
+
+.mgr-pin-error {
+  color: #fca5a5;
+  font-size: 13px;
+  text-align: center;
+  min-height: 20px;
+}
+
+.mgr-pin-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+
+.mgr-pin-key {
+  background: #334155;
+  color: #f1f5f9;
+  border: 1px solid #475569;
+  border-radius: 12px;
+  font-size: 22px;
+  font-weight: 600;
+  aspect-ratio: 1 / 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.12s, transform 0.08s;
+  touch-action: manipulation;
+}
+
+.mgr-pin-key:hover {
+  background: #475569;
+}
+
+.mgr-pin-key:active {
+  background: var(--accent);
+  transform: scale(0.95);
+}
+
+.mgr-pin-key-action {
+  font-size: 14px;
+  font-weight: 500;
+  background: #0f172a;
+  border-color: #334155;
+}
+
+.mgr-pin-cancel {
+  margin-top: 4px;
+  width: 100%;
+}
+
+/* ─── Manager settings view ───────────────────────────────── */
+.mgr-settings-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.mgr-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mgr-settings-header h2 {
+  margin: 0;
+  font-size: 20px;
+  color: #f1f5f9;
+}
+
+.mgr-settings-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mgr-tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.mgr-tile {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+  touch-action: manipulation;
+}
+
+.mgr-tile:hover {
+  background: #263344;
+  border-color: var(--accent);
+}
+
+.mgr-tile:active {
+  background: #1a2840;
+}
+
+.mgr-tile-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.mgr-tile-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.mgr-tile-desc {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.mgr-section-coming-soon {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.mgr-coming-soon-icon {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.mgr-section-coming-soon h3 {
+  margin: 0;
+  font-size: 22px;
+  color: #f1f5f9;
+}
+
+/* ─── Manager section views (System Status, Install, Dev Tools) ────── */
+.mgr-section-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.mgr-section-content {
+  flex: 1;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+}
+
+.mgr-section-content h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #f1f5f9;
+}
+
+.mgr-section-content h4 {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+/* System Status view */
+.mgr-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.mgr-status-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mgr-status-card.ok {
+  border-color: #166534;
+  background: #0f2818;
+}
+
+.mgr-status-card.bad {
+  border-color: #991b1b;
+  background: #3f0f0f;
+}
+
+.mgr-status-label {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.mgr-status-value {
+  font-size: 14px;
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+/* Installation view */
+.mgr-install-section {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.mgr-install-status-text {
+  margin: 0 0 12px 0;
+  color: #cbd5e1;
+  font-size: 14px;
+}
+
+.mgr-install-hint {
+  margin: 0 0 12px 0;
+  color: #847857;
+  font-size: 13px;
+  background: #3d3622;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border-left: 3px solid #a16207;
+}
+
+.mgr-pwa-info {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.mgr-pwa-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mgr-pwa-list li {
+  font-size: 14px;
+  color: #cbd5e1;
+}
+
+/* DevTools view */
+.mgr-devtools {
+  gap: 12px;
+}
+
+.mgr-devtools-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.mgr-devtools-section {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mgr-devtools-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+}
+
+.mgr-devtools-section select,
+.mgr-devtools-section button {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.mgr-devtools-metrics {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.mgr-devtools-metrics .metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mgr-devtools-metrics .metric span {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.mgr-devtools-metrics .metric b {
+  font-size: 14px;
+  color: #f1f5f9;
+}
+
+.call-sim-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.call-sim-actions button,
+.line-sim-buttons button {
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.mgr-raw-box {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px;
+  font-family: Courier, monospace;
+  font-size: 11px;
+  color: #94a3b8;
+  max-height: 300px;
+  overflow: auto;
+  margin: 0;
+}
+

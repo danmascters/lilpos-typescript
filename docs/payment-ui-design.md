@@ -10,7 +10,7 @@ The LilPOS payment UI is designed to be provider-neutral. The browser builds and
 
 ## Current Mock Implementation
 
-The current `paymentDialog` in `app.js` is a mock-only flow used to demonstrate the UI concept. It does not connect to any real payment processor.
+The current `paymentDialog` in `src/app.ts` is a mock-only flow used to demonstrate the UI concept. It does not connect to any real payment processor.
 
 State shape:
 

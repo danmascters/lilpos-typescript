@@ -52,7 +52,7 @@ Each category also carries a `kitchenPrinter` label (display name) and a `receip
 
 ## Ticket Payload Structure
 
-`ticketPayload(mode)` in `app.js` builds the full order object.
+`ticketPayload(mode)` in `src/app.ts` builds the full order object.
 
 Key fields:
 

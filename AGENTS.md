@@ -34,10 +34,10 @@ The browser must never connect directly to the database.
 
 ## Important Coding Rules
 
-- Keep app.js focused on UI, state, rendering, and event handling.
+- Keep src/app.ts focused on UI, state, rendering, and event handling.
 - Keep styles.css focused on layout and visual styling.
 - Do not redesign unrelated areas during focused tasks.
-- Do not convert the project to TypeScript unless explicitly requested.
+- Keep source code in TypeScript; do not reintroduce JavaScript source files unless explicitly requested.
 - Do not introduce backend work unless explicitly requested.
 - Do not introduce real payment or printer integrations unless explicitly requested.
 - Do not change pizza modifier behavior unless the task explicitly says so.

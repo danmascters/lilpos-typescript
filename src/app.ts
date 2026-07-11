@@ -30,8 +30,14 @@ const businessSettings = {
 const MAIN_VIEWS = {
   menu: 'menu',
   orders: 'orders',
-  customers: 'customers'
+  customers: 'customers',
+  managerPin: 'managerPin',
+  managerSettings: 'managerSettings'
 };
+
+// Temporary demo PIN — UI-only gate; real PIN validation must be performed
+// by the backend, tied to an employee identity and permissions.
+const DEFAULT_MANAGER_PIN = '1234';
 
 const ORDER_MGMT_FILTERS = {
   open: 'open',
@@ -239,6 +245,10 @@ const state: any = {
   favoriteItemIds: ['item_00001', 'item_00003', 'item_00008', 'item_00021'],
   favoriteCategoryIds: [],
   showCancelConfirm: false,
+  managerPinEntry: '',
+  managerPinError: '',
+  managerUnlocked: false,
+  managerSettingsSection: null,
   sentOrdersToday: [],
   quickItemEditor: {
     itemId: null,
@@ -1531,11 +1541,18 @@ function getModifierSelectionPrice(option, preModifierValue) {
   return Number.isFinite(option.price) ? option.price : 0;
 }
 
-function itemUsesPizzaModifierUi(item) {
+function isCustomPizzaModifierCategoryName(categoryName) {
+  const normalized = String(categoryName || '').trim().toLowerCase();
+  return normalized === 'pizza' || normalized === 'specialty pizza';
+}
+
+function itemUsesCustomPizzaModifierUi(item) {
   if (!item) return false;
-  if (item.modifierUiType === 'pizza' || item.usesPizzaModifier || item.isPizzaItem) return true;
-  const groupIds = state.idx?.itemMods?.get(item.id) || [];
-  return groupIds.some((gid) => state.idx?.groupsById?.[gid]?.pricingMode === 'pizza_half_whole');
+  const categoryId = item.categoryId;
+  const category = state.idx?.catsById?.[categoryId]
+    || lilposDataService.indexes.categoriesById.get(categoryId)
+    || null;
+  return isCustomPizzaModifierCategoryName(category?.name);
 }
 
 function getPizzaToppingGroup(item) {
@@ -1893,6 +1910,33 @@ function generateMenu(scale = 'large'): any {
   const cookNames = ['Light Cook', 'Regular Cook', 'Well Done', 'Extra Crispy', 'Do Not Cut', 'Cut in Squares', 'No Salt', 'Sauce on Side', 'Dressing on Side', 'Extra Sauce'];
   const drinkNames = ['Coke', 'Diet Coke', 'Sprite', 'Root Beer', 'Orange Soda', 'Water', 'Iced Tea', 'Lemonade', 'Dr Pepper', 'Ginger Ale'];
 
+  // Fixed sample items for the primary pizza categories. These replace the
+  // random item-name generator for these categories only.
+  const fixedItemsByCategory: Record<string, string[]> = {
+    Pizza: [
+      'Plain Pie',
+      'Margherita Pie',
+      'Sicilian Pie',
+      'Pepperoni Pie',
+      'Sausage Pie',
+      'Vodka Pie',
+      'Gluten Free Pie'
+    ],
+    'Specialty Pizza': [
+      'Buffalo Chicken Pie',
+      'Chicken Bacon Ranch Pie',
+      'Hawaiian Pie',
+      'Chicken Marsala Pie',
+      'Chicken Francese Pie',
+      'Vegetable Pie'
+    ],
+    'Sicilian & Grandma': [
+      'Sicilian Pie',
+      'Grandma Pie',
+      'Brooklyn Pie'
+    ]
+  };
+
   function addGroup(name: any, type: any, options: any[], rules: any = {}) {
     const gid = makeId('grp', modifierGroups.length + 1);
     modifierGroups.push({
@@ -1982,10 +2026,15 @@ function generateMenu(scale = 'large'): any {
       receiptPrinter: 'Front Receipt'
     });
 
-    for (let j = 0; j < cfg.itemsPerCat; j++) {
+    const fixedCategoryItems = fixedItemsByCategory[cname] || null;
+    const categoryItemCount = fixedCategoryItems ? fixedCategoryItems.length : cfg.itemsPerCat;
+
+    for (let j = 0; j < categoryItemCount; j++) {
       const globalIndex = c * cfg.itemsPerCat + j + 1;
       const id = makeId('item', globalIndex);
       const isPizza = /Pizza|Sicilian|Slices/.test(cname) || j % 13 === 0;
+      const isPizzaLike = /Pizza|Sicilian|Slices/.test(cname) || j % 13 === 0;
+      const usesCustomPizzaModifierUi = isCustomPizzaModifierCategoryName(cname);
       const isDinner = /Dinner|Seafood|Veal|Chicken|Eggplant/.test(cname);
       const isPasta = /Pasta/.test(cname) || j % 17 === 0;
       const isHero = /Heros|Wraps|Paninis|Burgers/.test(cname);
@@ -1995,33 +2044,35 @@ function generateMenu(scale = 'large'): any {
       const item = {
         id,
         categoryId: cid,
-        name: `${sample(itemWords)} ${sample(bases)}`,
-        description: `Mock item ${globalIndex} with realistic nested modifiers, routing, pricing, and register display data.`,
+        name: fixedCategoryItems?.[j] || `${sample(itemWords)} ${sample(bases)}`,
+        description: fixedCategoryItems
+          ? `${fixedCategoryItems[j]} sample menu item.`
+          : `Mock item ${globalIndex} with realistic nested modifiers, routing, pricing, and register display data.`,
         sortOrder: j + 1,
-        fixedPrice: !isPizza && !isCatering && j % 4 !== 0,
+        fixedPrice: !isPizzaLike && !isCatering && j % 4 !== 0,
         basePrice,
         imageUrl: null,
         taxRuleId: c % 9 === 0 ? 'tax_none' : 'tax_food',
         printerRouteId: categories[c].printerRouteId,
         sizeSchema: null,
-        modifierUiType: isPizza ? 'pizza' : 'standard',
-        isPizzaItem: !!isPizza,
+        modifierUiType: usesCustomPizzaModifierUi ? 'pizza' : 'standard',
+        isPizzaItem: !!usesCustomPizzaModifierUi,
         popular: j < 4,
         active: true
       };
 
       if (!item.fixedPrice) {
-        const applicable = isCatering ? sizes.slice(5) : isPizza ? sizes.slice(0, 5) : sizes.slice(1, 4);
+        const applicable = isCatering ? sizes.slice(5) : isPizzaLike ? sizes.slice(0, 5) : sizes.slice(1, 4);
         item.sizeSchema = applicable.map((s) => ({ sizeId: s.id, name: s.name, price: +(basePrice * s.multiplier).toFixed(2) }));
       }
 
-      if (globalIndex % 29 === 0 || (isPizza && j < 2) || (isDinner && j === 0)) {
+      if (globalIndex % 29 === 0 || (isPizzaLike && j < 2) || (isDinner && j === 0)) {
         item.imageUrl = mockFoodImageDataUri(item.name, (globalIndex * 17) % 360);
       }
 
       items.push(item);
 
-      if (isPizza) itemModifierGroups.push({ itemId: id, groupId: pizzaToppingsGroup }, { itemId: id, groupId: cookingGroup });
+      if (usesCustomPizzaModifierUi) itemModifierGroups.push({ itemId: id, groupId: pizzaToppingsGroup }, { itemId: id, groupId: cookingGroup });
       if (isDinner) itemModifierGroups.push({ itemId: id, groupId: sideGroup }, { itemId: id, groupId: cookingGroup });
       if (isPasta) itemModifierGroups.push({ itemId: id, groupId: pastaChoiceGroup }, { itemId: id, groupId: cookingGroup });
       if (isHero) itemModifierGroups.push({ itemId: id, groupId: heroAddonsGroup }, { itemId: id, groupId: cookingGroup });
@@ -3354,44 +3405,6 @@ function installUiState() {
   return { label: 'Install Unavailable', enabled: false, hint: 'Waiting for browser install eligibility.' };
 }
 
-function statusClass(ok) {
-  return ok ? 'ok' : 'bad';
-}
-
-function menuStatusText() {
-  if (!state.menu) return 'No menu cache';
-  return `Cache v${state.menu.packageVersion}`;
-}
-
-function topBarHtml() {
-  const install = installUiState();
-  const serverConnected = !state.offline;
-  const online = !state.offline;
-  return `
-    <div class="topbar">
-      <div class="brand">
-        <div class="logo">LP</div>
-        <div>
-          <h1>LiL POS (piece of $h1t!)</h1>
-          <small>Station: Counter 1</small>
-        </div>
-      </div>
-      <div class="status-chips">
-        <span class="chip-status">${h(menuStatusText())}</span>
-        <span class="chip-status ${statusClass(online)}">${online ? 'Online' : 'Offline'}</span>
-        <span class="chip-status ${statusClass(serverConnected)}">LilServer: ${serverConnected ? 'Connected' : 'Not Connected'}</span>
-        <span class="chip-status ok">Printer: Online</span>
-        <span class="chip-status ok">Caller ID: Listening</span>
-      </div>
-      <div class="top-actions">
-        ${!state.installed ? `<button id="installApp" class="btn-secondary" ${install.enabled ? '' : 'disabled'}>${h(install.label)}</button>` : ''}
-        <button id="toggleDevTools" class="btn-secondary">${state.devToolsOpen ? 'Hide Dev Tools' : 'Dev Tools'}</button>
-      </div>
-      ${install.hint ? `<div class="hint-row">${h(install.hint)}</div>` : ''}
-    </div>
-  `;
-}
-
 function categoryRailHtml() {
   const cats = visibleCategories();
   return `
@@ -3463,7 +3476,8 @@ function navIcon(name) {
     clock: '<circle cx="12" cy="12" r="8"></circle><path d="M12 7v5l3 2"></path>',
     orders: '<path d="M7 4h10l1 2v14l-2-1-2 1-2-1-2 1-2-1-2 1V6l1-2z"></path><path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M9 17h4"></path>',
     calendar: '<rect x="5" y="6" width="14" height="13" rx="2"></rect><path d="M8 4v4"></path><path d="M16 4v4"></path><path d="M5 10h14"></path>',
-    customer: '<circle cx="12" cy="8" r="3"></circle><path d="M6 19c.8-3.2 3-5 6-5s5.2 1.8 6 5"></path>'
+    customer: '<circle cx="12" cy="8" r="3"></circle><path d="M6 19c.8-3.2 3-5 6-5s5.2 1.8 6 5"></path>',
+    gear: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>'
   };
   return `<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
 }
@@ -3668,9 +3682,267 @@ function renderOrdersManagementView() {
   `;
 }
 
+function renderManagerPinView() {
+  const dots = '&#9679;'.repeat(state.managerPinEntry.length) + '&#9675;'.repeat(4 - state.managerPinEntry.length);
+  return `
+    <div class="mgr-pin-view">
+      <div class="mgr-pin-card">
+        <h2 class="mgr-pin-title">Manager Access</h2>
+        <p class="mgr-pin-instruction">Enter manager PIN</p>
+        <div class="mgr-pin-display" aria-label="PIN entry">${dots}</div>
+        ${state.managerPinError ? `<div class="mgr-pin-error">${h(state.managerPinError)}</div>` : ''}
+        <div class="mgr-pin-keypad">
+          ${[1,2,3,4,5,6,7,8,9].map((d) => `<button class="mgr-pin-key" data-pin-digit="${d}">${d}</button>`).join('')}
+          <button class="mgr-pin-key mgr-pin-key-action" data-pin-clear>Clear</button>
+          <button class="mgr-pin-key" data-pin-digit="0">0</button>
+          <button class="mgr-pin-key mgr-pin-key-action" data-pin-back>&#9003;</button>
+        </div>
+        <button id="mgrPinCancel" class="btn-secondary mgr-pin-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderManagerSystemStatusView() {
+  const online = !state.offline;
+  const serverConnected = !state.offline;
+  const statusCard = (label, ok, value = '') => `
+    <div class="mgr-status-card ${ok ? 'ok' : 'bad'}">
+      <span class="mgr-status-label">${h(label)}</span>
+      <span class="mgr-status-value">${h(value || (ok ? 'OK' : 'Not Available'))}</span>
+    </div>
+  `;
+  
+  return `
+    <div class="mgr-section-content">
+      <h3>System Status</h3>
+      <div class="mgr-status-grid">
+        ${statusCard('Menu Cache', !!state.menu, state.menu ? `v${state.menu.packageVersion}` : '')}
+        ${statusCard('Online Status', online)}
+        ${statusCard('LilServer Connection', serverConnected)}
+        ${statusCard('Printer', true, 'Online')}
+        ${statusCard('Caller ID', true, 'Listening')}
+        ${statusCard('Secure Context', state.pwaDiag.secure)}
+        ${statusCard('Manifest', state.pwaDiag.manifest)}
+        ${statusCard('Service Worker Supported', state.pwaDiag.swSupported)}
+        ${statusCard('Service Worker Registered', state.pwaDiag.swRegistered)}
+        ${statusCard('Service Worker Controlled', state.pwaDiag.swController)}
+        ${statusCard('Install Prompt', state.pwaDiag.beforeInstallPrompt)}
+        ${statusCard('App Installed', state.installed)}
+      </div>
+      <button id="mgrStatusBack" class="btn-secondary">Back to Settings</button>
+    </div>
+  `;
+}
+
+function renderManagerInstallView() {
+  const install = installUiState();
+  return `
+    <div class="mgr-section-content">
+      <h3>Application & Installation</h3>
+      <div class="mgr-install-section">
+        <h4>Install Status</h4>
+        <p class="mgr-install-status-text">
+          ${state.installed ? 'LilPOS is installed on this device.' : 'LilPOS is not installed. Use the button below to add it.'}
+        </p>
+        ${install.hint ? `<p class="mgr-install-hint">${h(install.hint)}</p>` : ''}
+        ${!state.installed ? `<button id="mgrInstallApp" class="btn-primary" ${install.enabled ? '' : 'disabled'}>${h(install.label)}</button>` : '<p class="muted">Installed – remove via device settings to reinstall.</p>'}
+      </div>
+      <div class="mgr-pwa-info">
+        <h4>PWA Features</h4>
+        <ul class="mgr-pwa-list">
+          <li><b>Secure Context:</b> ${state.pwaDiag.secure ? 'Yes' : 'No'}</li>
+          <li><b>Service Worker:</b> ${state.pwaDiag.swSupported ? 'Supported' : 'Not supported'}</li>
+          <li><b>Service Worker Registered:</b> ${state.pwaDiag.swRegistered ? 'Yes' : 'No'}</li>
+          <li><b>Service Worker Active:</b> ${state.pwaDiag.swController ? 'Yes' : 'No'}</li>
+        </ul>
+      </div>
+      <button id="mgrInstallBack" class="btn-secondary">Back to Settings</button>
+    </div>
+  `;
+}
+
+function renderManagerDevToolsView() {
+  const payload = JSON.stringify(ticketPayload('raw-preview'), null, 2);
+  return `
+    <div class="mgr-section-content mgr-devtools">
+      <h3>Developer Tools</h3>
+      <div class="mgr-devtools-controls">
+        <div class="mgr-devtools-section">
+          <h4>Menu Generation</h4>
+          <select id="mgrScale">
+            <option value="medium" ${state.scale === 'medium' ? 'selected' : ''}>Medium data</option>
+            <option value="large" ${state.scale === 'large' ? 'selected' : ''}>Large data</option>
+            <option value="huge" ${state.scale === 'huge' ? 'selected' : ''}>Huge data</option>
+          </select>
+          <button id="mgrGenerate" class="btn-primary">Generate + Store Menu</button>
+          <button id="mgrSeedMedium" class="btn-secondary">Load Medium Seed</button>
+          <button id="mgrSeedLarge" class="btn-secondary">Load Large Seed</button>
+          <button id="mgrSeedHuge" class="btn-secondary">Load Huge Seed</button>
+        </div>
+        <div class="mgr-devtools-section">
+          <h4>Database</h4>
+          <button id="mgrLoad" class="btn-primary">Load DB</button>
+          <button id="mgrClear" class="btn-danger">Clear DB</button>
+        </div>
+        <div class="mgr-devtools-section">
+          <h4>Network</h4>
+          <button id="mgrToggleOffline" class="btn-secondary">${state.offline ? 'Go Online' : 'Go Offline'}</button>
+        </div>
+      </div>
+      <div class="mgr-devtools-metrics">
+        <h4>Metrics</h4>
+        <div class="metric"><span>Menu</span><b>${state.menu ? `${state.menu.counts.items} items` : 'No cache'}</b></div>
+        <div class="metric"><span>Generate</span><b>${state.metrics.generateMs ? `${state.metrics.generateMs} ms` : '-'}</b></div>
+        <div class="metric"><span>Store IndexedDB</span><b>${state.metrics.storeIndexedDbMs ? `${state.metrics.storeIndexedDbMs} ms` : '-'}</b></div>
+        <div class="metric"><span>Load IndexedDB</span><b>${state.metrics.loadIndexedDbMs ? `${state.metrics.loadIndexedDbMs} ms` : '-'}</b></div>
+        <div class="metric"><span>Filter</span><b>${state.metrics.lastFilterMs ? `${state.metrics.lastFilterMs} ms` : '-'}</b></div>
+        <div class="metric"><span>Package</span><b>${state.metrics.packageBytes ? `${(state.metrics.packageBytes / 1024 / 1024).toFixed(2)} MB` : '-'}</b></div>
+      </div>
+      <div class="mgr-devtools-section">
+        <h4>Caller ID Simulation</h4>
+        <div class="call-sim-actions">
+          <button class="btn-success" data-mgr-sim-count="1">Simulate 1 Incoming Call</button>
+          <button class="btn-success" data-mgr-sim-count="2">Simulate 2 Incoming Calls</button>
+          <button class="btn-success" data-mgr-sim-count="3">Simulate 3 Incoming Calls</button>
+          <button class="btn-success" data-mgr-sim-count="4">Simulate 4 Incoming Calls</button>
+          <button class="btn-danger" id="mgrEndAllCalls">End All Calls</button>
+        </div>
+        <div class="line-sim-buttons" style="margin-top:8px;">
+          ${state.phoneLines.map((l) => `<button class="btn-secondary ${l.state === 'idle' || l.state === 'ended' ? 'disabled' : ''}" data-mgr-end-line="${l.lineNumber}" ${l.state === 'idle' || l.state === 'ended' ? 'disabled' : ''}>End Line ${l.lineNumber}</button>`).join('')}
+        </div>
+      </div>
+      <div class="mgr-devtools-section">
+        <h4>Raw Ticket Payload</h4>
+        <pre class="mgr-raw-box">${h(payload.slice(0, 4000))}</pre>
+      </div>
+      <button id="mgrDevToolsBack" class="btn-secondary">Back to Settings</button>
+    </div>
+  `;
+}
+
+const MANAGER_SETTINGS_TILES = [
+  { id: 'system',      icon: '&#9881;',  title: 'System Status',     desc: 'Menu cache, online/offline, software status' },
+  { id: 'install',     icon: '&#128640;',title: 'Application & Installation', desc: 'Install app, PWA features' },
+  { id: 'devtools',    icon: '&#127942;',title: 'Developer Tools',   desc: 'Generate menu, load seeds, diagnostics' },
+  { id: 'menu',        icon: '&#9776;',  title: 'Menu',              desc: 'Manage menu layout and categories' },
+  { id: 'categories',  icon: '&#8853;',  title: 'Categories',        desc: 'Add, rename, hide categories' },
+  { id: 'items',       icon: '&#9783;',  title: 'Items',             desc: 'Edit items, prices, and modifiers' },
+  { id: 'outofstock',  icon: '&#9747;',  title: 'Out of Stock',      desc: 'Mark items unavailable' },
+  { id: 'printers',    icon: '&#9113;',  title: 'Printers',          desc: 'Printer routes and station config' },
+  { id: 'callerid',    icon: '&#9742;',  title: 'Caller ID',         desc: 'Caller ID lines and integration' },
+  { id: 'payments',    icon: '&#36;',    title: 'Payments',          desc: 'Payment methods and terminals' },
+  { id: 'employees',   icon: '&#128100;',title: 'Employees',         desc: 'Employee records and PINs' },
+  { id: 'permissions', icon: '&#128274;',title: 'Permissions',       desc: 'Role-based access control' },
+  { id: 'stations',    icon: '&#128421;',title: 'Stations',          desc: 'Register and station settings' },
+  { id: 'ordersettings', icon: '&#128203;', title: 'Order Settings', desc: 'Order types, timing, and defaults' },
+  { id: 'reports',     icon: '&#128200;',title: 'Reports',           desc: 'Sales summaries and activity' },
+  { id: 'business',    icon: '&#127981;',title: 'Business Settings', desc: 'Name, address, hours, and tax' },
+  { id: 'subscription', icon: '&#11088;',title: 'Subscription & Features', desc: 'Plan, tier, and enabled features' }
+];
+
+function renderManagerSettingsView() {
+  const activeSection = state.managerSettingsSection;
+  
+  // Display working sections with their own views
+  if (activeSection === 'system') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrStatusBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          ${renderManagerSystemStatusView()}
+        </div>
+      </div>
+    `;
+  }
+  if (activeSection === 'install') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrInstallBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          ${renderManagerInstallView()}
+        </div>
+      </div>
+    `;
+  }
+  if (activeSection === 'devtools') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrDevToolsBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          ${renderManagerDevToolsView()}
+        </div>
+      </div>
+    `;
+  }
+  
+  // Default: show placeholder for remaining sections
+  if (activeSection) {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrSectionBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-coming-soon">
+          <div class="mgr-coming-soon-icon">&#9881;</div>
+          <h3>${h(MANAGER_SETTINGS_TILES.find((t) => t.id === activeSection)?.title || activeSection)}</h3>
+          <p class="muted">This settings section is coming soon.</p>
+          <button id="mgrSectionBack" class="btn-secondary">&#8592; Back to Settings</button>
+        </div>
+      </div>
+    `;
+  }
+  
+  // Default: show settings tile grid
+  return `
+    <div class="mgr-settings-view">
+      <div class="mgr-settings-header">
+        <h2>Manager Settings</h2>
+        <div class="mgr-settings-header-actions">
+          <button id="mgrBackToMenu" class="btn-secondary">&#8592; Back to Menu</button>
+          <button id="mgrLock" class="btn-danger">Lock Manager</button>
+        </div>
+      </div>
+      <div class="mgr-tiles-grid">
+        ${MANAGER_SETTINGS_TILES.map((tile) => `
+          <button class="mgr-tile" data-mgr-tile="${tile.id}">
+            <span class="mgr-tile-icon" aria-hidden="true">${tile.icon}</span>
+            <span class="mgr-tile-title">${h(tile.title)}</span>
+            <span class="mgr-tile-desc">${h(tile.desc)}</span>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
 function renderMainAreaView(filtered) {
   if (state.mainView === MAIN_VIEWS.customers) return renderCustomerManagementView();
   if (state.mainView === MAIN_VIEWS.orders) return renderOrdersManagementView();
+  if (state.mainView === MAIN_VIEWS.managerPin) return renderManagerPinView();
+  if (state.mainView === MAIN_VIEWS.managerSettings) return renderManagerSettingsView();
   return renderHomeMenuView(filtered);
 }
 
@@ -3883,8 +4155,8 @@ function newSaleConfirmDialogHtml() {
         <h3>New Sale</h3>
         <p>If you continue, all information on this ticket will be lost</p>
         <div class="call-modal-actions">
-          <button id="newSaleGoBack" class="btn-secondary">Go Back</button>
           <button id="newSaleContinue" class="btn-danger">Continue</button>
+          <button id="newSaleGoBack" class="btn-secondary">Go Back</button>
         </div>
       </div>
     </div>
@@ -4245,50 +4517,20 @@ function categoryQuickEditDialogHtml() {
   `;
 }
 
-function devToolsHtml() {
-  const payload = JSON.stringify(ticketPayload('raw-preview'), null, 2);
-  return `
-    <section class="dev-tools">
-      <div class="dev-head"><h3>Dev Tools</h3><small>Benchmark and diagnostics panel</small></div>
-      <div class="dev-controls">
-        <select id="scale">
-          <option value="medium" ${state.scale === 'medium' ? 'selected' : ''}>Medium data</option>
-          <option value="large" ${state.scale === 'large' ? 'selected' : ''}>Large data</option>
-          <option value="huge" ${state.scale === 'huge' ? 'selected' : ''}>Huge data</option>
-        </select>
-        <button id="generate" class="btn-primary">Generate + Store Menu</button>
-        <button id="seedMedium" class="btn-secondary">Load Medium Seed</button>
-        <button id="seedLarge" class="btn-secondary">Load Large Seed</button>
-        <button id="seedHuge" class="btn-secondary">Load Huge Seed</button>
-        <button id="load" class="btn-primary">Load DB</button>
-        <button id="clear" class="btn-secondary">Clear DB</button>
-        <button id="toggleOffline" class="btn-secondary">${state.offline ? 'Go Online' : 'Go Offline'}</button>
-      </div>
-      <div class="dev-metrics">
-        <div class="metric"><span>Menu</span><b>${state.menu ? `${state.menu.counts.items} items` : 'No cache'}</b></div>
-        <div class="metric"><span>Generate</span><b>${state.metrics.generateMs ? `${state.metrics.generateMs} ms` : '-'}</b></div>
-        <div class="metric"><span>Store IndexedDB</span><b>${state.metrics.storeIndexedDbMs ? `${state.metrics.storeIndexedDbMs} ms` : '-'}</b></div>
-        <div class="metric"><span>Load IndexedDB</span><b>${state.metrics.loadIndexedDbMs ? `${state.metrics.loadIndexedDbMs} ms` : '-'}</b></div>
-        <div class="metric"><span>Filter</span><b>${state.metrics.lastFilterMs ? `${state.metrics.lastFilterMs} ms` : '-'}</b></div>
-        <div class="metric"><span>Package</span><b>${state.metrics.packageBytes ? `${(state.metrics.packageBytes / 1024 / 1024).toFixed(2)} MB` : '-'}</b></div>
-      </div>
-      <div class="dev-row"><small>${h(pwaDiagnosticsText())}</small></div>
-      <div class="dev-call-sim">
-        <h4>Caller ID Simulation</h4>
-        <div class="call-sim-actions">
-          <button class="btn-success" data-sim-count="1">Simulate 1 Incoming Call</button>
-          <button class="btn-success" data-sim-count="2">Simulate 2 Incoming Calls</button>
-          <button class="btn-success" data-sim-count="3">Simulate 3 Incoming Calls</button>
-          <button class="btn-success" data-sim-count="4">Simulate 4 Incoming Calls</button>
-          <button class="btn-danger" id="endAllCalls">End All Calls</button>
-        </div>
-        <div class="line-sim-buttons" style="margin-top:8px;">
-          ${state.phoneLines.map((l) => `<button class="btn-secondary ${l.state === 'idle' || l.state === 'ended' ? 'disabled' : ''}" data-end-line="${l.lineNumber}" ${l.state === 'idle' || l.state === 'ended' ? 'disabled' : ''}>End Line ${l.lineNumber}</button>`).join('')}
-        </div>
-      </div>
-      <div class="raw-box"><h4>Raw Ticket Payload View</h4><pre>${h(payload.slice(0, 4000))}</pre></div>
-    </section>
-  `;
+function pizzaHalfIcon(side: 'left' | 'right'): string {
+  // Render only the half-circle (half moon): arc + straight flat edge
+  // Left: arc goes counterclockwise (sweep-flag=0), flat edge is the diameter on the right
+  // Right: arc goes clockwise (sweep-flag=1), flat edge is the diameter on the left
+  const halfPath = side === 'left'
+    ? 'M12,2 A10,10 0 0,0 12,22 Z'
+    : 'M12,2 A10,10 0 0,1 12,22 Z';
+  const dots = side === 'left'
+    ? '<circle cx="7" cy="9" r="1.3"/><circle cx="8" cy="15" r="1.3"/>'
+    : '<circle cx="17" cy="9" r="1.3"/><circle cx="16" cy="15" r="1.3"/>';
+  return `<svg class="pizza-half-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path class="pizza-half-fill" d="${halfPath}" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    ${dots}
+  </svg>`;
 }
 
 function renderModifierGroupStandard(group) {
@@ -4375,8 +4617,8 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
                           <span class="pizza-top-price">${money(livePrice)}</span>
                         </button>
                         <div class="pizza-side-controls">
-                          <button class="pizza-side-btn ${side === 'left' ? 'active' : ''}" data-pizza-side="left" data-pizza-option="${option.id}">L</button>
-                          <button class="pizza-side-btn ${side === 'right' ? 'active' : ''}" data-pizza-side="right" data-pizza-option="${option.id}">R</button>
+                          <button class="pizza-side-btn ${side === 'left' ? 'active' : ''}" data-pizza-side="left" data-pizza-option="${option.id}" aria-label="Left half" title="Left half">${pizzaHalfIcon('left')}</button>
+                          <button class="pizza-side-btn ${side === 'right' ? 'active' : ''}" data-pizza-side="right" data-pizza-option="${option.id}" aria-label="Right half" title="Right half">${pizzaHalfIcon('right')}</button>
                           <button class="pizza-side-btn ${multiplier > 1 ? 'active mult' : ''}" data-pizza-mult="${option.id}">${multiplier}X</button>
                         </div>
                       </div>
@@ -4407,7 +4649,7 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
 function modalHtml(item) {
   const groups = (state.idx.itemMods.get(item.id) || []).map((gid) => state.idx.groupsById[gid]).filter(Boolean);
   const pizzaGroup = getPizzaToppingGroup(item);
-  if (itemUsesPizzaModifierUi(item) && pizzaGroup) {
+  if (itemUsesCustomPizzaModifierUi(item) && pizzaGroup) {
     return pizzaModifierModalHtml(item, groups, pizzaGroup);
   }
   const size = state.selectedConfig.size || item.sizeSchema?.[0]?.name || null;
@@ -4447,13 +4689,14 @@ function render() {
   const filtered = getFiltered();
   document.getElementById('app').innerHTML = `
     <div class="pos-app">
-      ${topBarHtml()}
+      <header class="mgr-cog-header">
+        <div class="mgr-cog-icon" id="managerSettingsBtn" title="Manager Settings" aria-label="Manager Settings">${navIcon('gear')}</div>
+      </header>
       <main class="workspace">
         ${categoryRailHtml()}
         ${renderMainAreaView(filtered)}
         ${ticketPanelHtml()}
       </main>
-      ${state.devToolsOpen ? devToolsHtml() : ''}
       ${phoneLinesFooterHtml()}
       ${state.selected ? modalHtml(state.selected) : ''}
       ${lineModalHtml()}
@@ -4549,6 +4792,134 @@ function attachEvents() {
   $('#toggleDevTools')?.addEventListener('click', () => {
     state.devToolsOpen = !state.devToolsOpen;
     render();
+  });
+
+  // Manager dev tools button listeners (with mgr- prefix)
+  $('#mgrScale')?.addEventListener('change', (e) => {
+    state.scale = e.target.value;
+  });
+  $('#mgrGenerate')?.addEventListener('click', generateAndStore);
+  $('#mgrSeedMedium')?.addEventListener('click', () => generateSeed('medium'));
+  $('#mgrSeedLarge')?.addEventListener('click', () => generateSeed('large'));
+  $('#mgrSeedHuge')?.addEventListener('click', () => generateSeed('huge'));
+  $('#mgrLoad')?.addEventListener('click', loadFromDb);
+  $('#mgrClear')?.addEventListener('click', clearAll);
+  $('#mgrToggleOffline')?.addEventListener('click', () => {
+    state.offline = !state.offline;
+    render();
+  });
+  $('#mgrInstallApp')?.addEventListener('click', installApp);
+  document.querySelectorAll('[data-mgr-sim-count]').forEach((b) => {
+    b.addEventListener('click', () => simulateIncomingCalls(Number(b.dataset.mgrSimCount)));
+  });
+  document.querySelectorAll('[data-mgr-end-line]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const lineNumber = Number(b.dataset.mgrEndLine);
+      const line = getLine(lineNumber);
+      if (line && line.state !== 'idle' && line.state !== 'ended') {
+        moveLineToEnded(lineNumber);
+        if (state.selectedLineNumber === lineNumber) state.selectedLineNumber = null;
+        render();
+      }
+    });
+  });
+  $('#mgrEndAllCalls')?.addEventListener('click', endAllCalls);
+
+  // Back button listeners for manager sections
+  $('#mgrStatusBack')?.addEventListener('click', () => {
+    state.managerSettingsSection = null;
+    render();
+  });
+  $('#mgrInstallBack')?.addEventListener('click', () => {
+    state.managerSettingsSection = null;
+    render();
+  });
+  $('#mgrDevToolsBack')?.addEventListener('click', () => {
+    state.managerSettingsSection = null;
+    render();
+  });
+
+  $('#managerSettingsBtn')?.addEventListener('click', () => {
+    if (state.managerUnlocked) {
+      state.mainView = MAIN_VIEWS.managerSettings;
+      state.managerSettingsSection = null;
+    } else {
+      state.managerPinEntry = '';
+      state.managerPinError = '';
+      state.mainView = MAIN_VIEWS.managerPin;
+    }
+    render();
+  });
+
+  $('#mgrPinCancel')?.addEventListener('click', () => {
+    state.mainView = MAIN_VIEWS.menu;
+    state.managerPinEntry = '';
+    state.managerPinError = '';
+    render();
+  });
+
+  document.querySelectorAll('[data-pin-digit]').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (state.managerPinEntry.length >= 4) return;
+      state.managerPinEntry += (b as HTMLElement).dataset.pinDigit || '';
+      state.managerPinError = '';
+      if (state.managerPinEntry.length === 4) {
+        if (state.managerPinEntry === DEFAULT_MANAGER_PIN) {
+          state.managerUnlocked = true;
+          state.mainView = MAIN_VIEWS.managerSettings;
+          state.managerSettingsSection = null;
+          state.managerPinEntry = '';
+          state.managerPinError = '';
+        } else {
+          state.managerPinError = 'Incorrect PIN';
+          state.managerPinEntry = '';
+        }
+      }
+      render();
+    });
+  });
+
+  document.querySelector('[data-pin-clear]')?.addEventListener('click', () => {
+    state.managerPinEntry = '';
+    state.managerPinError = '';
+    render();
+  });
+
+  document.querySelector('[data-pin-back]')?.addEventListener('click', () => {
+    state.managerPinEntry = state.managerPinEntry.slice(0, -1);
+    state.managerPinError = '';
+    render();
+  });
+
+  $('#mgrBackToMenu')?.addEventListener('click', () => {
+    state.mainView = MAIN_VIEWS.menu;
+    render();
+  });
+
+  $('#mgrSettingsBack')?.addEventListener('click', () => {
+    state.managerSettingsSection = null;
+    state.mainView = MAIN_VIEWS.managerSettings;
+    render();
+  });
+
+  $('#mgrSectionBack')?.addEventListener('click', () => {
+    state.managerSettingsSection = null;
+    render();
+  });
+
+  $('#mgrLock')?.addEventListener('click', () => {
+    state.managerUnlocked = false;
+    state.managerPinEntry = '';
+    state.managerPinError = '';
+    state.mainView = MAIN_VIEWS.menu;
+    render();
+  });
+
+  document.querySelectorAll('[data-mgr-tile]').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.managerSettingsSection = (b as HTMLElement).dataset.mgrTile || null;
+      render();
+    });
   });
 
   $('#toggleActivity')?.addEventListener('click', () => {
@@ -5195,7 +5566,7 @@ function attachEvents() {
   document.querySelectorAll('[data-size]').forEach((b) => {
     b.addEventListener('click', () => {
       state.selectedConfig.size = b.dataset.size;
-      if (state.selected && itemUsesPizzaModifierUi(state.selected)) {
+      if (state.selected && itemUsesCustomPizzaModifierUi(state.selected)) {
         resizePizzaSelectionPrices(state.selected, state.selectedConfig.size);
       }
       render();
@@ -5288,14 +5659,14 @@ function attachEvents() {
       };
     });
     const basePrice = item.fixedPrice ? item.basePrice : item.sizeSchema?.find((s) => s.name === size)?.price || item.basePrice;
-    const modifiersPrice = itemUsesPizzaModifierUi(item) ? +(mods as any[]).reduce((sum: number, entry: any) => sum + Number(entry.price || 0), 0).toFixed(2) : 0;
+    const modifiersPrice = itemUsesCustomPizzaModifierUi(item) ? +(mods as any[]).reduce((sum: number, entry: any) => sum + Number(entry.price || 0), 0).toFixed(2) : 0;
     const price = +(basePrice + modifiersPrice).toFixed(2);
     addItem(item, {
       size,
       mods,
       price,
       editingLineId: state.selectedConfig.editingLineId,
-      specialInstruction: itemUsesPizzaModifierUi(item) ? (state.selectedConfig.pizzaNotes || '') : undefined
+      specialInstruction: itemUsesCustomPizzaModifierUi(item) ? (state.selectedConfig.pizzaNotes || '') : undefined
     });
   });
 

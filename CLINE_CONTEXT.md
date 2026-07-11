@@ -9,13 +9,14 @@ Read AGENTS.md first for full architecture and coding rules.
 ## Repo Structure
 
 ```
-app.js                  Main frontend logic (state, rendering, events)
+src/app.ts              Main frontend logic (state, rendering, events)
 styles.css              All visual styling and layout
 index.html              Single HTML entry point
-lilpos-runtime-data.js  Runtime data service (customers, menu index, lookups)
-sw.js                   Service worker (PWA caching)
+src/lilpos-runtime-data.ts Runtime data service (customers, menu index, lookups)
+src/sw.ts               Service worker source (PWA caching)
+dist/                   Compiled JavaScript output consumed by index.html
 manifest.webmanifest    PWA manifest
-package.json            Dev script only (http-server on port 5173)
+package.json            TypeScript build + dev/Cloudflare scripts
 docs/                   Design docs for AI agents
 AGENTS.md               AI agent coding rules and architecture
 CLINE_CONTEXT.md        This file
@@ -29,15 +30,15 @@ CLINE_CONTEXT.md        This file
 npm run dev
 ```
 
-This starts `http-server` on port 5173 (no bundler/build step required).
+This runs the TypeScript build first, then starts `http-server` on port 8001.
 
-If port 5173 is already in use, the command will fail with EADDRINUSE. The server may already be running; open http://127.0.0.1:5173/ to verify.
+If port 8001 is already in use, the command will fail with EADDRINUSE. The server may already be running; open http://127.0.0.1:8001/ to verify.
 
 ---
 
 ## State Model
 
-All UI state lives in a single `state` object at the top of `app.js`.
+All UI state lives in a single `state` object in `src/app.ts`.
 
 Key areas:
 
@@ -131,15 +132,15 @@ Two separate popup paths:
 - Pizza topping pricing (`getPizzaUnitPrice`, `buildPizzaModifierEntry`).
 - Standard modifier behavior (`renderModifierGroupStandard`).
 - Login / auth flow (not present in mock, but do not stub real auth).
-- IndexedDB persistence (`lilpos-runtime-data.js`).
-- Service worker (`sw.js`).
+- IndexedDB/runtime data persistence (`src/lilpos-runtime-data.ts`).
+- Service worker source (`src/sw.ts`).
 - Ticket payload structure (`ticketPayload()`).
 
 ---
 
 ## Common Gotcha: Port Already In Use
 
-The `npm run dev` command (http-server) will fail if port 5173 is already occupied.
+The `npm run dev` command (build + http-server) will fail if port 8001 is already occupied.
 This is not a code error. Check if a server is already running before reporting failures.
 
 ---
