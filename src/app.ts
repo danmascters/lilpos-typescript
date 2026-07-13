@@ -46,6 +46,50 @@ const ORDER_MGMT_FILTERS = {
 };
 
 const STATION_NUMBER = 1; // Default station number, centralize here for future wire-up
+const MANAGER_SETTINGS_STORE_KEY = 'lilpos_manager_settings_v1';
+
+type KeyboardMode =
+  | 'micro'
+  | 'compact-footer'
+  | 'standard-qwerty'
+  | 'external';
+
+type IntentFieldType =
+  | 'customer-search'
+  | 'customer-profile-name'
+  | 'customer-profile-phone'
+  | 'customer-address'
+  | 'menu-search'
+  | 'special-instructions'
+  | 'modifier-instructions'
+  | 'generic-text'
+  | 'numeric';
+
+type IntentChipAction =
+  | 'replace-input'
+  | 'complete-input'
+  | 'append-text'
+  | 'toggle-order-tag';
+
+type IntentChip = {
+  id: string;
+  label: string;
+  action: IntentChipAction;
+  value?: string;
+  tagId?: string;
+  source?: 'menu' | 'customer' | 'modifier' | 'order-tag' | 'recent' | 'default';
+};
+
+type IntentSuggestionContext = {
+  fieldType: IntentFieldType;
+  typedValue: string;
+  orderType?: string;
+  activeCategoryId?: string;
+  activeItemId?: string;
+  activeCustomerId?: string;
+};
+
+const DEFAULT_KEYBOARD_MODE: KeyboardMode = 'micro';
 
 // Order Persistence Module
 const OrderPersistence = (() => {
@@ -227,6 +271,7 @@ const state: any = {
   customerName: '',
   customerPhone: '',
   customerNotes: '',
+  orderSpecialInstructions: '',
   activeCustomer: null,
   customerPanelMode: 'compact',
   customerEditorMode: 'new',
@@ -249,6 +294,7 @@ const state: any = {
   managerPinError: '',
   managerUnlocked: false,
   managerSettingsSection: null,
+  keyboardMode: DEFAULT_KEYBOARD_MODE,
   sentOrdersToday: [],
   quickItemEditor: {
     itemId: null,
@@ -279,6 +325,7 @@ const state: any = {
   searchRefocus: false,
   searchCursorPos: 0,
   scrollCartOnAdd: false,
+  restoreMenuBoardScrollTop: null,
   lineCount: 6,
   phoneLines: [],
   selectedLineNumber: null,
@@ -353,6 +400,987 @@ const state: any = {
   },
   newSalePendingLineNumber: null
 };
+
+function normalizeKeyboardMode(mode): KeyboardMode {
+  if (mode === 'compact-footer') return 'compact-footer';
+  if (mode === 'standard-qwerty') return 'standard-qwerty';
+  if (mode === 'external') return 'external';
+  return 'micro';
+}
+
+function keyboardModeLabel(mode: KeyboardMode) {
+  if (mode === 'compact-footer') return 'Compact Footer Keyboard';
+  if (mode === 'standard-qwerty') return 'Standard QWERTY Keyboard';
+  if (mode === 'external') return 'External Keyboard';
+  return 'Micro Keyboard';
+}
+
+function readManagerSettings() {
+  try {
+    const raw = localStorage.getItem(MANAGER_SETTINGS_STORE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    console.error('Failed to read manager settings:', err);
+    return {};
+  }
+}
+
+function persistManagerSettings() {
+  try {
+    const existing = readManagerSettings();
+    const next = {
+      ...existing,
+      keyboardMode: normalizeKeyboardMode(state.keyboardMode)
+    };
+    localStorage.setItem(MANAGER_SETTINGS_STORE_KEY, JSON.stringify(next));
+  } catch (err) {
+    console.error('Failed to persist manager settings:', err);
+  }
+}
+
+function hydrateManagerSettingsFromStorage() {
+  const settings = readManagerSettings();
+  state.keyboardMode = normalizeKeyboardMode(settings.keyboardMode);
+}
+
+function normalizeIntentText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeIntentText(value) {
+  const normalized = normalizeIntentText(value);
+  return normalized ? normalized.split(' ') : [];
+}
+
+function intentFieldTypeForInput(target): IntentFieldType {
+  if (!target) return 'generic-text';
+  const contextAttr = String(target.getAttribute?.('data-keyboard-context') || '').toLowerCase();
+  if (
+    contextAttr === 'customer-search'
+    || contextAttr === 'customer-profile-name'
+    || contextAttr === 'customer-profile-phone'
+    || contextAttr === 'customer-address'
+    || contextAttr === 'menu-search'
+    || contextAttr === 'special-instructions'
+    || contextAttr === 'modifier-instructions'
+    || contextAttr === 'generic-text'
+    || contextAttr === 'numeric'
+  ) {
+    return contextAttr as IntentFieldType;
+  }
+
+  const id = String(target.id || '').toLowerCase();
+  const name = String((target as HTMLInputElement).name || '').toLowerCase();
+  const placeholder = String((target as HTMLInputElement).placeholder || '').toLowerCase();
+  const blob = `${id} ${name} ${placeholder}`;
+
+  if (id === 'query') return 'menu-search';
+  if (id === 'ordersquery') return 'generic-text';
+  if (id === 'customermgmtquery') return 'customer-search';
+  if (id === 'orderspecialinstructionsinput') return 'special-instructions';
+  if (id === 'pizzanotesinput') return 'modifier-instructions';
+  if (id === 'cartitemeditorinput' && state.cartItemEditor?.mode === 'note') return 'modifier-instructions';
+  if (/entryname|customermgmtname|deliveryname|paynowmissingname|paylatermissingname/.test(id)) return 'customer-profile-name';
+  if (/entryphone|customermgmtphone|deliveryphone|paynowmissingphone|paylatermissingphone/.test(id)) return 'customer-profile-phone';
+  if (/entryaddress1|customermgmtaddress1|deliveryaddress1|paynowmissingaddress1|paylatermissingaddress1|entrycity|customermgmtcity|deliverycity|paynowmissingcity|paylatermissingcity|entrystate|customermgmtstate|deliverystate|paynowmissingstate|paylatermissingstate|entryzip|customermgmtzip|deliveryzip|paynowmissingzip|paylatermissingzip/.test(id)) return 'customer-address';
+  if (/instructions|notes/.test(blob)) {
+    if (/pizza|item-specific|special instruction/.test(blob)) return 'modifier-instructions';
+    if (/order special/.test(blob)) return 'special-instructions';
+    return 'special-instructions';
+  }
+  if (/customer name/.test(blob)) return 'customer-profile-name';
+  if (/address|city|state|zip/.test(blob)) return 'customer-address';
+  if (/search menu/.test(blob)) return 'menu-search';
+
+  if (target instanceof HTMLInputElement) {
+    const type = String(target.type || '').toLowerCase();
+    const inputMode = String(target.inputMode || target.getAttribute('inputmode') || '').toLowerCase();
+    if (type === 'number' || inputMode === 'numeric' || inputMode === 'decimal' || inputMode === 'tel') {
+      return 'numeric';
+    }
+  }
+
+  return 'generic-text';
+}
+
+function looksInstructionLikePhrase(value) {
+  const normalized = normalizeIntentText(value);
+  if (!normalized) return false;
+  if (normalized.length < 4) return false;
+  const tokens = normalized.split(' ');
+  const hasKeyword = tokens.some((token) => /^(no|well|light|extra|cut|side|sauce|done|crispy|toasted|dressing|salt|allergy|leave|ring)$/.test(token));
+  return hasKeyword || tokens.length > 1;
+}
+
+function lastWordPrefix(value) {
+  const normalized = normalizeIntentText(value);
+  if (!normalized) return '';
+  const tokens = normalized.split(' ');
+  return tokens[tokens.length - 1] || '';
+}
+
+function scoreIntentCandidate(label, query) {
+  const labelNorm = normalizeIntentText(label);
+  const queryNorm = normalizeIntentText(query);
+  if (!labelNorm || !queryNorm) return 0;
+  if (labelNorm.startsWith(queryNorm)) return 120;
+  const labelTokens = tokenizeIntentText(labelNorm);
+  if (labelTokens.some((token) => token.startsWith(queryNorm))) return 90;
+  if (labelNorm.includes(queryNorm)) return 60;
+  const prefix = lastWordPrefix(queryNorm);
+  if (prefix && labelTokens.some((token) => token.startsWith(prefix))) return 40;
+  return 0;
+}
+
+function addIntentCandidate(candidates, candidate) {
+  const label = String(candidate?.label || '').trim();
+  if (!label) return;
+  const key = normalizeIntentText(label);
+  if (!key) return;
+  const existing = candidates.get(key);
+  if (!existing || Number(candidate.weight || 0) > Number(existing.weight || 0)) {
+    candidates.set(key, candidate);
+  }
+}
+
+function localMenuIntentCandidates() {
+  const candidates = new Map();
+  const items = lilposDataService?.getAllItems?.() || [];
+  items.forEach((item, index) => {
+    addIntentCandidate(candidates, {
+      label: item.name,
+      value: item.name,
+      action: 'replace-input',
+      source: 'menu',
+      weight: state.favoriteItemIds?.includes(item.id) ? 130 - index : 90 - index
+    });
+  });
+  const categories = visibleCategories?.() || [];
+  categories.forEach((category, index) => {
+    addIntentCandidate(candidates, {
+      label: category.name,
+      value: category.name,
+      action: 'replace-input',
+      source: 'menu',
+      weight: 60 - index
+    });
+  });
+  if (state.idx?.optsByGroup) {
+    state.idx.optsByGroup.forEach((opts) => {
+      (opts || []).forEach((opt) => {
+        addIntentCandidate(candidates, {
+          label: opt.name,
+          value: opt.name,
+          action: 'replace-input',
+          source: 'modifier',
+          weight: 40
+        });
+      });
+    });
+  }
+  return Array.from(candidates.values());
+}
+
+function localCustomerSearchCandidates() {
+  const candidates = new Map();
+
+  const addCustomerSearchEntries = (customer, index = 0, source = 'customer', weightBase = 120) => {
+    const name = String(customer?.name || '').trim();
+    const phone = normalizePhone(customer?.phone || '');
+    const phoneMasked = phoneDisplayValue(phone);
+    const address = customerAddressText(customer);
+
+    addIntentCandidate(candidates, {
+      label: name,
+      value: name,
+      action: 'replace-input',
+      source,
+      weight: weightBase - index
+    });
+
+    if (phoneMasked) {
+      addIntentCandidate(candidates, {
+        label: name ? `${name} (${phoneMasked})` : phoneMasked,
+        value: name || phoneMasked,
+        action: 'replace-input',
+        source,
+        weight: weightBase - 8 - index
+      });
+    }
+
+    if (address) {
+      addIntentCandidate(candidates, {
+        label: name ? `${name} - ${address}` : address,
+        value: address,
+        action: 'replace-input',
+        source,
+        weight: weightBase - 14 - index
+      });
+    }
+  };
+
+  (state.mockCustomers || []).forEach((customer, index) => {
+    addCustomerSearchEntries(customer, index, 'customer', 130);
+  });
+  (state.mockOrders || []).forEach((order, index) => {
+    addCustomerSearchEntries(order?.customerInfo || { name: order?.customerName || '' }, index, 'recent', 90);
+  });
+  (OrderPersistence.getPersistedOrders() || []).slice(0, 24).forEach((order, index) => {
+    const customer = order?.customerSnapshot || order?.customerInfo || order?.customer || null;
+    addCustomerSearchEntries(customer, index, 'recent', 100);
+  });
+  return Array.from(candidates.values());
+}
+
+function localInstructionCandidates(context: IntentSuggestionContext) {
+  const candidates = new Map();
+  const addPhrase = (phrase, source = 'recent', weight = 60) => {
+    if (!looksInstructionLikePhrase(phrase)) return;
+    addIntentCandidate(candidates, {
+      label: phrase,
+      value: phrase,
+      action: 'complete-input',
+      source,
+      weight
+    });
+  };
+
+  (state.mockCustomers || []).forEach((customer, index) => addPhrase(customer?.specialInstructions, 'customer', 80 - index));
+  addPhrase(state.customerDraft?.specialInstructions, 'recent', 80);
+  addPhrase(state.orderSpecialInstructions, 'order-tag', 90);
+  addPhrase(state.selectedConfig?.pizzaNotes, 'modifier', 85);
+  (state.cart || []).forEach((line, index) => addPhrase(line?.specialInstruction, 'recent', 70 - index));
+
+  if (state.idx?.optsByGroup) {
+    state.idx.optsByGroup.forEach((opts) => {
+      (opts || []).forEach((opt) => addPhrase(opt?.name, 'modifier', 50));
+    });
+  }
+
+  if (context.fieldType === 'modifier-instructions' && context.activeItemId && state.idx?.itemMods) {
+    const groupIds = state.idx.itemMods.get(context.activeItemId) || [];
+    groupIds.forEach((groupId) => {
+      const opts = state.idx?.optsByGroup?.get(groupId) || [];
+      opts.forEach((opt, index) => addPhrase(opt?.name, 'modifier', 120 - index));
+    });
+  }
+
+  return Array.from(candidates.values());
+}
+
+function filteredIntentChips(candidates, context: IntentSuggestionContext, limit = 8): IntentChip[] {
+  const typedNorm = normalizeIntentText(context.typedValue);
+  const queryForMatch = typedNorm || '';
+  const withScores = candidates
+    .map((candidate, index) => {
+      const baseWeight = Number(candidate.weight || 0);
+      const score = typedNorm ? scoreIntentCandidate(candidate.label, queryForMatch) : baseWeight;
+      return {
+        ...candidate,
+        score,
+        index
+      };
+    })
+    .filter((entry) => {
+      if (!typedNorm) return entry.score > 0;
+      return entry.score >= 40;
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, limit);
+
+  return withScores.map((entry, index) => ({
+    id: `${entry.source || 'intent'}_${index}_${normalizeIntentText(entry.label).replace(/\s+/g, '_').slice(0, 24)}`,
+    label: entry.label,
+    action: entry.action,
+    value: entry.value || entry.label,
+    source: entry.source
+  }));
+}
+
+function getIntentChips(context: IntentSuggestionContext): IntentChip[] {
+  if (!context || !context.fieldType) return [];
+
+  if (context.fieldType === 'menu-search') {
+    const candidates = localMenuIntentCandidates();
+    return filteredIntentChips(candidates, context, 8);
+  }
+
+  if (context.fieldType === 'customer-search') {
+    const candidates = localCustomerSearchCandidates();
+    return filteredIntentChips(candidates, context, 8);
+  }
+
+  if (context.fieldType === 'special-instructions' || context.fieldType === 'modifier-instructions') {
+    const candidates = localInstructionCandidates(context);
+    return filteredIntentChips(candidates, context, 8);
+  }
+
+  return [];
+}
+
+const keyboardController = (() => {
+  let mode: KeyboardMode = DEFAULT_KEYBOARD_MODE;
+  let activeInput: HTMLInputElement | HTMLTextAreaElement | null = null;
+  let rootEl: HTMLElement | null = null;
+  const MICRO_KEYBOARD_GAP = 8;
+  let activeInputKind: 'text' | 'numeric' | 'decimal' | 'phone' | 'pin' = 'text';
+  let activeIntentFieldType: IntentFieldType = 'generic-text';
+  let activeIntentChips: IntentChip[] = [];
+
+  function ensureRoot() {
+    if (rootEl && document.body.contains(rootEl)) return rootEl;
+    rootEl = document.createElement('div');
+    rootEl.id = 'lilposCustomKeyboard';
+    rootEl.className = 'custom-keyboard-root is-hidden';
+    document.body.appendChild(rootEl);
+    return rootEl;
+  }
+
+  function isSupportedInput(element) {
+    if (!element) return false;
+    if (element instanceof HTMLTextAreaElement) {
+      return !element.disabled && !element.readOnly;
+    }
+    if (!(element instanceof HTMLInputElement)) return false;
+    if (element.disabled || element.readOnly) return false;
+    const type = String(element.type || 'text').toLowerCase();
+    const blocked = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
+    if (blocked.has(type)) return false;
+    return true;
+  }
+
+  function shouldShowCustomKeyboard() {
+    return mode !== 'external';
+  }
+
+  function getKeyboardInputKind(target): 'text' | 'numeric' | 'decimal' | 'phone' | 'pin' {
+    if (!target) return 'text';
+    const contextAttr = String(target.getAttribute?.('data-keyboard-context') || '').toLowerCase();
+    if (contextAttr === 'customer-profile-phone') return 'phone';
+    if (contextAttr === 'customer-search' || contextAttr === 'customer-profile-name' || contextAttr === 'customer-address' || contextAttr === 'menu-search' || contextAttr === 'special-instructions' || contextAttr === 'modifier-instructions' || contextAttr === 'generic-text') {
+      return 'text';
+    }
+    if (contextAttr === 'numeric') return 'numeric';
+
+    const attrKind = String(target.getAttribute?.('data-keyboard-kind') || '').toLowerCase();
+    if (attrKind === 'numeric' || attrKind === 'decimal' || attrKind === 'phone' || attrKind === 'pin' || attrKind === 'text') {
+      return attrKind as 'text' | 'numeric' | 'decimal' | 'phone' | 'pin';
+    }
+    if (target instanceof HTMLTextAreaElement) return 'text';
+    if (!(target instanceof HTMLInputElement)) return 'text';
+
+    const type = String(target.type || '').toLowerCase();
+    const inputMode = String(target.inputMode || target.getAttribute('inputmode') || '').toLowerCase();
+    const idNameBlob = `${target.id || ''} ${target.name || ''} ${target.className || ''} ${target.placeholder || ''}`.toLowerCase();
+
+    if (target.id === 'customerMgmtQuery') return 'text';
+
+    if (type === 'number') return 'numeric';
+    if (inputMode === 'tel' || type === 'tel') return 'phone';
+    if (type === 'password' && /pin/.test(idNameBlob)) return 'pin';
+    if (/price|amount|tip|payment|currency|cash/.test(idNameBlob)) return 'decimal';
+    if (inputMode === 'decimal') return 'decimal';
+    if (inputMode === 'numeric') return 'numeric';
+    if (/zip|qty|quantity|count|line number|modifiercount/.test(idNameBlob)) return 'numeric';
+    return 'text';
+  }
+
+  function activeIntentContextForTarget(target): IntentSuggestionContext {
+    return {
+      fieldType: intentFieldTypeForInput(target),
+      typedValue: String(target?.value || ''),
+      orderType: state.orderType,
+      activeCategoryId: state.category,
+      activeItemId: state.selected?.id || null,
+      activeCustomerId: state.activeCustomer?.id || null
+    };
+  }
+
+  function refreshIntentChips() {
+    if (!activeInput || activeInputKind !== 'text') {
+      activeIntentChips = [];
+      return;
+    }
+    const context = activeIntentContextForTarget(activeInput);
+    activeIntentFieldType = context.fieldType;
+    activeIntentChips = getIntentChips(context);
+  }
+
+  function keyboardRowHtml(keys, rowClass = 'kbd-row') {
+    return `
+      <div class="${rowClass}">
+        ${keys.map((key) => {
+          const label = h(String(key.label || ''));
+          const keyValue = h(String(key.value || ''));
+          const action = key.action ? ` data-kbd-action="${h(String(key.action))}"` : '';
+          const sizeClass = key.sizeClass ? ` ${h(String(key.sizeClass))}` : '';
+          return `<button type="button" class="kbd-key${sizeClass}" data-kbd-key="${keyValue}"${action}>${label}</button>`;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  function microKeyboardRowsHtml() {
+    return `
+      <div class="micro-keyboard-rows" aria-hidden="true">
+        ${keyboardRowHtml([
+          { label: '1', value: '1' },
+          { label: '2', value: '2' },
+          { label: '3', value: '3' },
+          { label: '4', value: '4' },
+          { label: '5', value: '5' },
+          { label: '6', value: '6' },
+          { label: '7', value: '7' },
+          { label: '8', value: '8' },
+          { label: '9', value: '9' },
+          { label: '0', value: '0' }
+        ], 'micro-keyboard-row micro-keyboard-row-10')}
+        ${keyboardRowHtml([
+          { label: 'Q', value: 'q' },
+          { label: 'W', value: 'w' },
+          { label: 'E', value: 'e' },
+          { label: 'R', value: 'r' },
+          { label: 'T', value: 't' },
+          { label: 'Y', value: 'y' },
+          { label: 'U', value: 'u' },
+          { label: 'I', value: 'i' },
+          { label: 'O', value: 'o' },
+          { label: 'P', value: 'p' }
+        ], 'micro-keyboard-row micro-keyboard-row-10')}
+        ${keyboardRowHtml([
+          { label: 'A', value: 'a' },
+          { label: 'S', value: 's' },
+          { label: 'D', value: 'd' },
+          { label: 'F', value: 'f' },
+          { label: 'G', value: 'g' },
+          { label: 'H', value: 'h' },
+          { label: 'J', value: 'j' },
+          { label: 'K', value: 'k' },
+          { label: 'L', value: 'l' }
+        ], 'micro-keyboard-row micro-keyboard-row-9')}
+        ${keyboardRowHtml([
+          { label: 'Z', value: 'z' },
+          { label: 'X', value: 'x' },
+          { label: 'C', value: 'c' },
+          { label: 'V', value: 'v' },
+          { label: 'B', value: 'b' },
+          { label: 'N', value: 'n' },
+          { label: 'M', value: 'm' }
+        ], 'micro-keyboard-row micro-keyboard-row-7')}
+        ${keyboardRowHtml([
+          { label: 'Backspace', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-action-key' },
+          { label: 'Space', value: ' ', action: 'space', sizeClass: 'micro-keyboard-action-key' },
+          { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-action-key' }
+        ], 'micro-keyboard-actions')}
+      </div>
+    `;
+  }
+
+  function keyboardRowsHtml() {
+    return microKeyboardRowsHtml();
+  }
+
+  function keyboardIntentRailHtml(kind: 'text' | 'numeric' | 'decimal' | 'phone' | 'pin') {
+    const chips = kind === 'text' ? activeIntentChips : [];
+    return `
+      <div class="micro-keyboard-intent-rail" aria-label="Keyboard intent chips">
+        ${chips.map((chip) => `<button type="button" class="micro-keyboard-intent-chip" data-intent-chip-id="${h(chip.id)}" title="${h(chip.label)}">${h(chip.label)}</button>`).join('')}
+      </div>
+    `;
+  }
+
+  function numericKeyboardGridHtml(kind: 'numeric' | 'decimal' | 'phone' | 'pin') {
+    const rows = [
+      [
+        { label: '1', value: '1' },
+        { label: '2', value: '2' },
+        { label: '3', value: '3' }
+      ],
+      [
+        { label: '4', value: '4' },
+        { label: '5', value: '5' },
+        { label: '6', value: '6' }
+      ],
+      [
+        { label: '7', value: '7' },
+        { label: '8', value: '8' },
+        { label: '9', value: '9' }
+      ]
+    ];
+    const bottomRow = kind === 'decimal'
+      ? [
+          { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-numeric-action' },
+          { label: '0', value: '0' },
+          { label: '.', value: '.', action: 'decimal' }
+        ]
+      : [
+          { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-numeric-action' },
+          { label: '0', value: '0' },
+          { label: '<<<', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-numeric-action' }
+        ];
+
+    return `
+      <div class="micro-keyboard-numeric-grid" aria-hidden="true">
+        ${rows.map((row) => keyboardRowHtml(row, 'micro-keyboard-numeric-row')).join('')}
+        ${keyboardRowHtml(bottomRow, 'micro-keyboard-numeric-row')}
+        ${kind === 'decimal'
+          ? keyboardRowHtml([
+              { label: '<<<', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-numeric-action micro-keyboard-numeric-backspace' }
+            ], 'micro-keyboard-numeric-row micro-keyboard-numeric-row-1')
+          : ''}
+      </div>
+    `;
+  }
+
+  function numericMicroKeyboardHtml(kind: 'numeric' | 'decimal' | 'phone' | 'pin') {
+    return `
+      <div class="kbd-micro-shell micro-keyboard micro-keyboard--numeric">
+        <div class="kbd-head micro-keyboard-header">
+          ${keyboardIntentRailHtml(kind)}
+          <button type="button" class="kbd-close micro-keyboard-done" data-kbd-done="1">Done</button>
+        </div>
+        ${numericKeyboardGridHtml(kind)}
+      </div>
+    `;
+  }
+
+  function microKeyboardHtml() {
+    return `
+      <div class="kbd-micro-shell micro-keyboard">
+        <div class="kbd-head micro-keyboard-header">
+          ${keyboardIntentRailHtml('text')}
+          <button type="button" class="kbd-close micro-keyboard-done" data-kbd-done="1">Done</button>
+        </div>
+        ${microKeyboardRowsHtml()}
+      </div>
+    `;
+  }
+
+  function refreshIntentRailDom() {
+    if (mode !== 'micro' || activeInputKind !== 'text') return;
+    const root = ensureRoot();
+    const rail = root.querySelector('.micro-keyboard-intent-rail');
+    if (!rail) return;
+    rail.innerHTML = activeIntentChips
+      .map((chip) => `<button type="button" class="micro-keyboard-intent-chip" data-intent-chip-id="${h(chip.id)}" title="${h(chip.label)}">${h(chip.label)}</button>`)
+      .join('');
+  }
+
+  function compactFooterKeyboardHtml() {
+    return `
+      <div class="kbd-footer-shell">
+        <div class="kbd-head">
+          <b>Compact Footer Keyboard</b>
+          <button type="button" class="kbd-close" data-kbd-done="1">Done</button>
+        </div>
+        ${keyboardRowsHtml()}
+      </div>
+    `;
+  }
+
+  function standardQwertyKeyboardHtml() {
+    return `
+      <div class="kbd-standard-overlay">
+        <div class="kbd-standard-shell">
+          <div class="kbd-head">
+            <b>Standard QWERTY Keyboard</b>
+            <button type="button" class="kbd-close" data-kbd-done="1">Close</button>
+          </div>
+          ${keyboardRowsHtml()}
+        </div>
+      </div>
+    `;
+  }
+
+  function positionMicroKeyboard(inputElement) {
+    const root = ensureRoot();
+    const shell = root.querySelector('.kbd-micro-shell') as HTMLElement | null;
+    if (!shell) return;
+    const rect = inputElement.getBoundingClientRect();
+    const kind = activeInputKind;
+    const desiredWidth = kind === 'text' ? 600 : 260;
+    const minWidth = kind === 'text' ? 300 : 220;
+    const maxWidth = Math.min(desiredWidth, Math.max(minWidth, window.innerWidth - 24));
+    shell.style.width = `${maxWidth}px`;
+    const keyboardWidth = shell.offsetWidth || maxWidth;
+    const keyboardHeight = shell.offsetHeight || 0;
+    const left = Math.min(
+      Math.max(MICRO_KEYBOARD_GAP, rect.left),
+      window.innerWidth - keyboardWidth - MICRO_KEYBOARD_GAP
+    );
+    const preferredTop = rect.bottom + MICRO_KEYBOARD_GAP;
+    const fitsBelow = preferredTop + keyboardHeight <= window.innerHeight - MICRO_KEYBOARD_GAP;
+    const top = fitsBelow
+      ? preferredTop
+      : Math.max(MICRO_KEYBOARD_GAP, rect.top - keyboardHeight - MICRO_KEYBOARD_GAP);
+    shell.style.left = `${left}px`;
+    shell.style.top = `${top}px`;
+  }
+
+  function dispatchKeyboardInput(target) {
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function dispatchKeyboardChange(target) {
+    target.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function setTargetSelection(target, start, end = start) {
+    if (typeof target.setSelectionRange !== 'function') return;
+    const nextStart = Math.max(0, start);
+    const nextEnd = Math.max(nextStart, end);
+    target.setSelectionRange(nextStart, nextEnd);
+  }
+
+  function normalizeSelection(target) {
+    const value = String(target.value || '');
+    const start = typeof target.selectionStart === 'number' ? target.selectionStart : value.length;
+    const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+    return { value, start, end };
+  }
+
+  function focusKeyboardTarget() {
+    if (!activeInput || !document.contains(activeInput)) return null;
+    activeInput.focus({ preventScroll: true });
+    return activeInput;
+  }
+
+  function insertTextIntoKeyboardTarget(text) {
+    const target = focusKeyboardTarget();
+    if (!target) return;
+    const { value, start, end } = normalizeSelection(target);
+    target.value = `${value.slice(0, start)}${text}${value.slice(end)}`;
+    const nextCaret = start + text.length;
+    setTargetSelection(target, nextCaret);
+    dispatchKeyboardInput(target);
+  }
+
+  function backspaceKeyboardTarget() {
+    const target = focusKeyboardTarget();
+    if (!target) return;
+    const { value, start, end } = normalizeSelection(target);
+    if (start === 0 && end === 0) return;
+    if (start !== end) {
+      target.value = `${value.slice(0, start)}${value.slice(end)}`;
+      setTargetSelection(target, start);
+      dispatchKeyboardInput(target);
+      return;
+    }
+    target.value = `${value.slice(0, Math.max(0, start - 1))}${value.slice(end)}`;
+    setTargetSelection(target, Math.max(0, start - 1));
+    dispatchKeyboardInput(target);
+  }
+
+  function clearKeyboardTarget() {
+    const target = focusKeyboardTarget();
+    if (!target) return;
+    target.value = '';
+    setTargetSelection(target, 0);
+    dispatchKeyboardInput(target);
+    dispatchKeyboardChange(target);
+  }
+
+  function applyIntentChipToTarget(chip: IntentChip) {
+    const target = focusKeyboardTarget();
+    if (!target) return;
+    const currentValue = String(target.value || '');
+    const nextText = String(chip.value || chip.label || '').trim();
+    if (!nextText) return;
+
+    if (chip.action === 'replace-input') {
+      target.value = nextText;
+      setTargetSelection(target, nextText.length);
+      dispatchKeyboardInput(target);
+      refreshIntentChips();
+      refreshIntentRailDom();
+      return;
+    }
+
+    if (chip.action === 'toggle-order-tag') {
+      const currentNorm = normalizeIntentText(currentValue);
+      const nextNorm = normalizeIntentText(nextText);
+      if (currentNorm.includes(nextNorm)) {
+        const nextValue = currentValue.replace(new RegExp(nextText, 'ig'), '').replace(/\s+/g, ' ').trim();
+        target.value = nextValue;
+        setTargetSelection(target, nextValue.length);
+      } else {
+        const nextValue = `${currentValue.trim()}${currentValue.trim() ? ' ' : ''}${nextText}`;
+        target.value = nextValue;
+        setTargetSelection(target, nextValue.length);
+      }
+      dispatchKeyboardInput(target);
+      refreshIntentChips();
+      refreshIntentRailDom();
+      return;
+    }
+
+    const { value, start, end } = normalizeSelection(target);
+    if (chip.action === 'append-text') {
+      const left = value.slice(0, start).trimEnd();
+      const right = value.slice(end).trimStart();
+      const nextValue = `${left}${left ? ' ' : ''}${nextText}${right ? ` ${right}` : ''}`.trim();
+      target.value = nextValue;
+      setTargetSelection(target, nextValue.length);
+      dispatchKeyboardInput(target);
+      refreshIntentChips();
+      refreshIntentRailDom();
+      return;
+    }
+
+    const tokenStart = (() => {
+      let idx = start;
+      while (idx > 0 && !/\s/.test(value[idx - 1])) idx -= 1;
+      return idx;
+    })();
+    const tokenEnd = (() => {
+      let idx = end;
+      while (idx < value.length && !/\s/.test(value[idx])) idx += 1;
+      return idx;
+    })();
+    const nextValue = `${value.slice(0, tokenStart)}${nextText}${value.slice(tokenEnd)}`;
+    target.value = nextValue;
+    setTargetSelection(target, tokenStart + nextText.length);
+    dispatchKeyboardInput(target);
+    refreshIntentChips();
+    refreshIntentRailDom();
+  }
+
+  function handleIntentChipSelection(chipId) {
+    if (!chipId || activeInputKind !== 'text') return;
+    const chip = activeIntentChips.find((entry) => entry.id === chipId);
+    if (!chip) return;
+    applyIntentChipToTarget(chip);
+  }
+
+  function handleMicroKeyboardAction(action, keyValue) {
+    if (action === 'done') {
+      hideKeyboard();
+      const active = document.activeElement as HTMLElement | null;
+      if (active && typeof active.blur === 'function') active.blur();
+      return;
+    }
+    if (action === 'backspace') {
+      backspaceKeyboardTarget();
+      refreshIntentChips();
+      refreshIntentRailDom();
+      return;
+    }
+    if (action === 'clear') {
+      clearKeyboardTarget();
+      refreshIntentChips();
+      refreshIntentRailDom();
+      return;
+    }
+    if (action === 'space') {
+      insertTextIntoKeyboardTarget(' ');
+      refreshIntentChips();
+      refreshIntentRailDom();
+      return;
+    }
+    if (action === 'decimal') {
+      const target = focusKeyboardTarget();
+      if (!target) return;
+      if (activeInputKind !== 'decimal') return;
+      const value = String(target.value || '');
+      if (value.includes('.')) return;
+      insertTextIntoKeyboardTarget('.');
+      refreshIntentChips();
+      refreshIntentRailDom();
+      return;
+    }
+    insertTextIntoKeyboardTarget(keyValue);
+    refreshIntentChips();
+    refreshIntentRailDom();
+  }
+
+  function showKeyboardForInput(inputElement, _context = {}) {
+    if (!inputElement || !isSupportedInput(inputElement)) {
+      hideKeyboard();
+      return;
+    }
+    activeInput = inputElement;
+    activeInputKind = getKeyboardInputKind(inputElement);
+    activeIntentFieldType = activeInputKind === 'text' ? intentFieldTypeForInput(inputElement) : 'generic-text';
+    refreshIntentChips();
+    if (!shouldShowCustomKeyboard()) {
+      hideKeyboard();
+      return;
+    }
+
+    const root = ensureRoot();
+    root.className = `custom-keyboard-root mode-${mode}`;
+    if (mode === 'micro') {
+      root.innerHTML = activeInputKind === 'text'
+        ? microKeyboardHtml()
+        : numericMicroKeyboardHtml(activeInputKind);
+      positionMicroKeyboard(inputElement);
+      return;
+    }
+    if (mode === 'compact-footer') {
+      root.innerHTML = compactFooterKeyboardHtml();
+      return;
+    }
+    root.innerHTML = standardQwertyKeyboardHtml();
+  }
+
+  function hideKeyboard() {
+    const root = ensureRoot();
+    root.className = `custom-keyboard-root is-hidden mode-${mode}`;
+    root.innerHTML = '';
+    activeInputKind = 'text';
+    activeIntentFieldType = 'generic-text';
+    activeIntentChips = [];
+  }
+
+  function getKeyboardMode() {
+    return mode;
+  }
+
+  function setKeyboardMode(nextMode, options: any = {}) {
+    mode = normalizeKeyboardMode(nextMode);
+    state.keyboardMode = mode;
+    if (options.persist !== false) persistManagerSettings();
+
+    if (!shouldShowCustomKeyboard()) {
+      hideKeyboard();
+      return;
+    }
+    if (activeInput && document.contains(activeInput)) {
+      showKeyboardForInput(activeInput, { source: 'mode-change' });
+    } else {
+      hideKeyboard();
+    }
+  }
+
+  function getActiveInput() {
+    return activeInput;
+  }
+
+  return {
+    getKeyboardMode,
+    setKeyboardMode,
+    shouldShowCustomKeyboard,
+    showKeyboardForInput,
+    hideKeyboard,
+    isSupportedInput,
+    getActiveInput,
+    positionMicroKeyboard,
+    handleMicroKeyboardAction,
+    handleIntentChipSelection,
+    refreshIntentChips,
+    getActiveInputKind: () => activeInputKind,
+    getActiveIntentFieldType: () => activeIntentFieldType
+  };
+})();
+
+let keyboardLifecycleInstalled = false;
+
+function installKeyboardLifecycleEvents() {
+  if (keyboardLifecycleInstalled) return;
+  keyboardLifecycleInstalled = true;
+
+  document.addEventListener('focusin', (event) => {
+    const target = event.target as Element;
+    if (!keyboardController.isSupportedInput(target)) return;
+    keyboardController.showKeyboardForInput(target as HTMLInputElement | HTMLTextAreaElement, { source: 'focusin' });
+  });
+
+  document.addEventListener('focusout', (event) => {
+    const target = event.target as Element;
+    if (!keyboardController.isSupportedInput(target)) return;
+    window.setTimeout(() => {
+      const nextActive = document.activeElement as Element | null;
+      if (keyboardController.isSupportedInput(nextActive)) {
+        keyboardController.showKeyboardForInput(nextActive as HTMLInputElement | HTMLTextAreaElement, { source: 'focus-shift' });
+        return;
+      }
+      keyboardController.hideKeyboard();
+    }, 0);
+  });
+
+  document.addEventListener('click', (event) => {
+    const el = event.target as Element;
+    if (!el) return;
+    if (!el.closest('[data-kbd-done]')) return;
+    keyboardController.hideKeyboard();
+    const active = document.activeElement as HTMLElement | null;
+    if (active && typeof active.blur === 'function') active.blur();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    keyboardController.hideKeyboard();
+  });
+
+  document.addEventListener('pointerdown', (event) => {
+    const el = event.target as Element;
+    if (!el) return;
+    if (!el.closest('.kbd-key') && !el.closest('.micro-keyboard-intent-chip')) return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
+  document.addEventListener('click', (event) => {
+    const el = event.target as Element;
+    const key = el?.closest('.kbd-key') as HTMLElement | null;
+    if (!key) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const keyValue = key.dataset.kbdKey || '';
+    const action = key.dataset.kbdAction || '';
+    keyboardController.handleMicroKeyboardAction(action, keyValue);
+  });
+
+  document.addEventListener('click', (event) => {
+    const el = event.target as Element;
+    const chip = el?.closest('.micro-keyboard-intent-chip') as HTMLElement | null;
+    if (!chip) return;
+    event.preventDefault();
+    event.stopPropagation();
+    keyboardController.handleIntentChipSelection(chip.dataset.intentChipId || '');
+  });
+
+  document.addEventListener('input', (event) => {
+    const target = event.target as Element;
+    if (!keyboardController.isSupportedInput(target)) return;
+    if (keyboardController.getKeyboardMode() !== 'micro') return;
+    if (keyboardController.getActiveInputKind() !== 'text') return;
+    if (keyboardController.getActiveInput() !== target) return;
+    keyboardController.showKeyboardForInput(target as HTMLInputElement | HTMLTextAreaElement, { source: 'input-change' });
+  });
+
+  document.addEventListener('click', (event) => {
+    const el = event.target as Element;
+    if (!el) return;
+    if (!el.closest('[data-order-type],[data-cat],[data-item],[data-pizza-nav],[data-pizza-filter],[data-mod-group],[data-pre-group]')) return;
+    window.setTimeout(() => {
+      const active = keyboardController.getActiveInput();
+      if (!active || !document.contains(active)) return;
+      if (keyboardController.getKeyboardMode() !== 'micro') return;
+      if (keyboardController.getActiveInputKind() !== 'text') return;
+      keyboardController.showKeyboardForInput(active, { source: 'context-change' });
+    }, 0);
+  });
+
+  window.addEventListener('resize', () => {
+    const activeInput = keyboardController.getActiveInput();
+    if (!activeInput) return;
+    if (keyboardController.getKeyboardMode() !== 'micro') return;
+    keyboardController.positionMicroKeyboard(activeInput);
+  });
+
+  window.addEventListener('scroll', () => {
+    const activeInput = keyboardController.getActiveInput();
+    if (!activeInput) return;
+    if (keyboardController.getKeyboardMode() !== 'micro') return;
+    keyboardController.positionMicroKeyboard(activeInput);
+  }, true);
+}
 
 function baseMockCustomers() {
   return [
@@ -472,8 +1500,65 @@ function baseMockOrders() {
 
 state.mockOrders = baseMockOrders();
 
-function normalizePhone(phone) {
-  return String(phone || '').replace(/\D/g, '');
+function normalizePhone(value: string) {
+  return String(value ?? '').replace(/\D/g, '').slice(0, 10);
+}
+
+function formatPhone(value: string) {
+  const digits = normalizePhone(value);
+
+  if (!digits) return '';
+
+  if (digits.length <= 3) {
+    return `(${digits}`;
+  }
+
+  if (digits.length <= 6) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  }
+
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+}
+
+function phoneDisplayValue(value: string) {
+  const digits = normalizePhone(value || '');
+  return digits ? formatPhone(digits) : '';
+}
+
+function countDigitsBeforeIndex(value: string, index: number) {
+  const safeValue = String(value || '');
+  const safeIndex = Math.max(0, Math.min(index, safeValue.length));
+  let count = 0;
+  for (let i = 0; i < safeIndex; i += 1) {
+    if (/\d/.test(safeValue[i])) count += 1;
+  }
+  return count;
+}
+
+function caretIndexForDigitCount(formatted: string, digitCount: number) {
+  if (digitCount <= 0) return 0;
+  let seen = 0;
+  for (let i = 0; i < formatted.length; i += 1) {
+    if (/\d/.test(formatted[i])) {
+      seen += 1;
+      if (seen >= digitCount) return i + 1;
+    }
+  }
+  return formatted.length;
+}
+
+function syncPhoneInputMask(input: HTMLInputElement) {
+  const current = String(input.value || '');
+  const caret = typeof input.selectionStart === 'number' ? input.selectionStart : current.length;
+  const digitsBeforeCaret = countDigitsBeforeIndex(current, caret);
+  const digits = normalizePhone(current);
+  const formatted = formatPhone(digits);
+  input.value = formatted;
+  const nextCaret = caretIndexForDigitCount(formatted, digitsBeforeCaret);
+  if (typeof input.setSelectionRange === 'function') {
+    input.setSelectionRange(nextCaret, nextCaret);
+  }
+  return digits;
 }
 
 function customerAddressText(customer) {
@@ -485,10 +1570,11 @@ function findKnownCustomerByPhone(phone) {
 }
 
 function applyCustomerSummary(customer) {
-  state.activeCustomer = customer;
+  const normalizedPhone = normalizePhone(customer?.phone || '');
+  state.activeCustomer = customer ? { ...customer, phone: normalizedPhone } : customer;
   state.customerPanelMode = 'compact';
   state.customerName = customer?.name || '';
-  state.customerPhone = customer?.phone || '';
+  state.customerPhone = normalizedPhone;
   const notes = [customer?.allergies ? `Allergies: ${customer.allergies}` : '', customer?.specialInstructions ? `Instructions: ${customer.specialInstructions}` : ''].filter(Boolean).join(' | ');
   state.customerNotes = notes;
 }
@@ -507,7 +1593,7 @@ function hasDeliveryProfile(customerLike) {
 function profileDraftFromCustomer(customer) {
   return {
     name: customer?.name || '',
-    phone: customer?.phone || '',
+    phone: normalizePhone(customer?.phone || ''),
     address1: customer?.address1 || '',
     city: customer?.city || '',
     state: customer?.state || '',
@@ -578,11 +1664,12 @@ function closeDeliveryProfileDialog(markMissing) {
 }
 
 async function upsertCustomerProfileDraft(draft) {
-  const existing = findKnownCustomerByPhone(draft.phone);
+  const normalizedPhone = normalizePhone(draft.phone || '');
+  const existing = findKnownCustomerByPhone(normalizedPhone);
   const customer = {
     id: existing?.id || `cust_${Date.now()}`,
     name: draft.name || 'Walk-in Caller',
-    phone: draft.phone,
+    phone: normalizedPhone,
     address1: draft.address1,
     city: draft.city,
     state: draft.state,
@@ -724,7 +1811,7 @@ function buildMissingInfoDraft() {
 
   return {
     name: customer.name || '',
-    phone: customer.phone || '',
+    phone: normalizePhone(customer.phone || ''),
     address1: customer.address1 || '',
     city: customer.city || '',
     state: customer.state || '',
@@ -819,6 +1906,7 @@ function resetTicketAfterPayment() {
   state.customerName = '';
   state.customerPhone = '';
   state.customerNotes = '';
+  state.orderSpecialInstructions = '';
   state.customerDraft = {
     name: '',
     phone: '',
@@ -851,6 +1939,7 @@ function hasActiveTicketState() {
   return !!(
     (Array.isArray(state.cart) && state.cart.length > 0)
     || hasTicketCustomerData()
+    || !!String(state.orderSpecialInstructions || '').trim()
     || !!state.call
     || state.selectedLineNumber != null
     || state.timingType === 'future'
@@ -874,6 +1963,7 @@ function resetForNewSale() {
   state.customerName = '';
   state.customerPhone = '';
   state.customerNotes = '';
+  state.orderSpecialInstructions = '';
   state.call = null;
   state.selectedLineNumber = null;
   state.customerDraft = {
@@ -957,6 +2047,7 @@ function completePayNowOrder() {
     timingType: payload.timingType,
     asapTime: payload.asapTime,
     futureDateTime: payload.futureDateTime,
+    orderSpecialInstructions: payload.orderSpecialInstructions,
     status: 'completed',
     paymentStatus: 'paid',
     paid: true,
@@ -1029,6 +2120,7 @@ function completePayLaterOrder() {
     timingType: payload.timingType,
     asapTime: payload.asapTime,
     futureDateTime: payload.futureDateTime,
+    orderSpecialInstructions: payload.orderSpecialInstructions,
     status: 'open',
     paymentStatus: 'pay_later',
     paid: false,
@@ -1077,7 +2169,7 @@ function beginUnknownCustomerEntry(line) {
   state.activeCustomer = null;
   state.customerDraft = {
     name: line?.callerName || '',
-    phone: line?.phoneNumber || '',
+    phone: normalizePhone(line?.phoneNumber || ''),
     address1: address.street || '',
     city: address.city || '',
     state: address.state || '',
@@ -1088,7 +2180,7 @@ function beginUnknownCustomerEntry(line) {
   
   // Pre-fill phone from caller ID for pickup/to-go if not already set
   if (!state.customerDraft.phone && line?.phoneNumber && (state.orderType === 'pickup' || state.orderType === 'togo')) {
-    state.customerDraft.phone = line.phoneNumber;
+    state.customerDraft.phone = normalizePhone(line.phoneNumber);
   }
 }
 
@@ -1167,7 +2259,7 @@ function mockCallerPayload(lineNumber) {
   const last = ['Rossi', 'Bianchi', 'Marino', 'DeLuca', 'Santiago', 'Ortiz', 'Greco'];
   const streets = ['Oak Ave', 'Market St', 'River Rd', 'Maple Dr', 'Hudson Ave', 'Union St'];
   const cities = ['Bayonne', 'Jersey City', 'Newark', 'Hoboken', 'Elizabeth'];
-  const phone = `(${sample(['201', '551', '732', '908'])}) ${Math.floor(100 + Math.random() * 899)}-${Math.floor(1000 + Math.random() * 8999)}`;
+  const phone = `${sample(['201', '551', '732', '908'])}${Math.floor(100 + Math.random() * 899)}${Math.floor(1000 + Math.random() * 8999)}`;
   const callerName = `${sample(first)} ${sample(last)}`;
   const address = {
     street: `${Math.floor(10 + Math.random() * 980)} ${sample(streets)}`,
@@ -1196,11 +2288,11 @@ function knownCustomerCallerPayload(lineNumber, customer) {
   const address = includeAddress ? { street: customer.address1, city: customer.city, state: customer.state, zip: customer.zip } : { street: '', city: '', state: '', zip: '' };
   return {
     lineNumber,
-    phoneNumber: customer.phone,
+    phoneNumber: normalizePhone(customer.phone),
     callerName: includeName ? customer.name : '',
     address,
     rawDetails: {
-      ani: customer.phone,
+      ani: normalizePhone(customer.phone),
       dnis: `Line-${lineNumber}`,
       matchType: 'known-customer',
       customerId: customer.id,
@@ -2228,7 +3320,7 @@ async function generateSeed(scale) {
 
 async function clearAll() {
   await dbClear();
-  Object.assign(state, { menu: null, metrics: {}, cart: [], selected: null, idx: null, category: VIEW_ALL_ITEMS, favoriteCategoryIds: [], sentOrdersToday: [] });
+  Object.assign(state, { menu: null, metrics: {}, cart: [], selected: null, idx: null, category: VIEW_ALL_ITEMS, favoriteCategoryIds: [], sentOrdersToday: [], orderSpecialInstructions: '' });
   state.removeConfirmLineId = null;
   resetOrderClassifiers();
   render();
@@ -2237,7 +3329,38 @@ async function clearAll() {
 function clearTicket() {
   state.cart = [];
   state.removeConfirmLineId = null;
+  state.orderSpecialInstructions = '';
   render();
+}
+
+function setActiveOrderSpecialInstructions(value) {
+  if (selectedOrderForDetail()) return;
+  state.orderSpecialInstructions = String(value || '').slice(0, 280);
+}
+
+function clearActiveOrderSpecialInstructions() {
+  state.orderSpecialInstructions = '';
+}
+
+function syncOrderSpecialInstructionsLiveUi() {
+  const live = document.querySelector('#orderSpecialInstructionsLive') as HTMLElement | null;
+  const clearBtn = document.querySelector('#clearOrderSpecialInstructionsBtn') as HTMLButtonElement | null;
+  const value = String(state.orderSpecialInstructions || '').trim();
+  const locked = !!selectedOrderForDetail();
+
+  if (clearBtn) {
+    clearBtn.disabled = locked || !value;
+  }
+
+  if (live) {
+    if (value) {
+      live.textContent = `Special Instructions: ${value}`;
+      live.classList.remove('is-hidden');
+    } else {
+      live.textContent = '';
+      live.classList.add('is-hidden');
+    }
+  }
 }
 
 function resetOrderClassifiers() {
@@ -2316,6 +3439,7 @@ function selectedOrderForDetail() {
       timingType: persistedOrder.timingType,
       asapTime: persistedOrder.asapTime,
       futureDateTime: persistedOrder.futureDateTime,
+      orderSpecialInstructions: persistedOrder.orderSpecialInstructions || persistedOrder.rawSnapshot?.orderSpecialInstructions || '',
       createdTimestamp: persistedOrder.createdTimestamp,
       lines,
       isPersisted: true
@@ -2346,6 +3470,7 @@ function selectedOrderForDetail() {
       timingType: 'asap',
       asapTime: null,
       futureDateTime: null,
+      orderSpecialInstructions: order.orderSpecialInstructions || '',
       createdTimestamp: null,
       lines: (order.lines || []).map((name, idx) => ({
         lineId: `legacy_${order.id}_${idx}`,
@@ -2360,6 +3485,10 @@ function selectedOrderForDetail() {
   }
 
   return null;
+}
+
+function isNewOrderState() {
+  return !selectedOrderForDetail();
 }
 
 function cancelSaleConfirmed() {
@@ -2391,7 +3520,7 @@ function simulateCallOnLine(lineNumber) {
   clearLineResetTimer(lineNumber);
   updateLine(lineNumber, {
     state: 'ringing',
-    phoneNumber: payload.phoneNumber,
+    phoneNumber: normalizePhone(payload.phoneNumber),
     callerName: payload.callerName,
     address: payload.address,
     rawDetails: payload.rawDetails,
@@ -2399,7 +3528,7 @@ function simulateCallOnLine(lineNumber) {
     claimedByStation: ''
   });
   state.call = {
-    phone: payload.phoneNumber,
+    phone: normalizePhone(payload.phoneNumber),
     name: payload.callerName,
     line: lineNumber,
     at: new Date().toLocaleTimeString(),
@@ -2417,7 +3546,7 @@ function simulateIncomingCalls(count) {
     clearLineResetTimer(line.lineNumber);
     updateLine(line.lineNumber, {
       state: 'ringing',
-      phoneNumber: payload.phoneNumber,
+      phoneNumber: normalizePhone(payload.phoneNumber),
       callerName: payload.callerName,
       address: payload.address,
       rawDetails: payload.rawDetails,
@@ -2866,7 +3995,11 @@ function bindItemTilePress(element, itemId) {
       alert(`${item.name} is out of stock.`);
       return;
     }
-    openItem(itemId);
+    if (itemHasModifierGroups(item)) {
+      openItem(itemId);
+      return;
+    }
+    addItemDirectFromMenuCard(itemId);
   });
 }
 
@@ -3115,11 +4248,12 @@ function ticketPayload(kind: any): any {
     asapTime: timingType === 'asap' && state.asapTime ? state.asapTime : null,
     futureDateTime: timingType === 'future' ? state.futureDateTime : null,
     futureOrderNote,
+    orderSpecialInstructions: state.orderSpecialInstructions,
     printTimingNote: timingType === 'future' ? `FUTURE ORDER\nReady/Requested: ${futureLabel}` : `Ready/Requested: ${asapTimingLabel}`,
     customer: {
       id: state.activeCustomer?.id || null,
       name: state.activeCustomer?.name || state.customerDraft.name || state.customerName,
-      phone: state.activeCustomer?.phone || state.customerDraft.phone || state.customerPhone,
+      phone: normalizePhone(state.activeCustomer?.phone || state.customerDraft.phone || state.customerPhone),
       address1: state.activeCustomer?.address1 || state.customerDraft.address1,
       city: state.activeCustomer?.city || state.customerDraft.city,
       state: state.activeCustomer?.state || state.customerDraft.state,
@@ -3174,7 +4308,7 @@ function compactCustomerSummaryHtml() {
   const c = state.activeCustomer;
   return `
     <div class="customer-summary customer-summary-populated">
-      <div class="sum-top"><b>${h(c.name)}</b><span>${h(c.phone)}</span></div>
+      <div class="sum-top"><b>${h(c.name)}</b><span>${h(phoneDisplayValue(c.phone))}</span></div>
       ${customerAddressText(c) ? `<small>${h(customerAddressText(c))}</small>` : ''}
       <div class="sum-tags">
         ${c.allergies ? `<span class="tag warn">Allergy: ${h(c.allergies)}</span>` : ''}
@@ -3190,12 +4324,12 @@ function expandedCustomerEntryHtml() {
   return `
     <div class="customer-entry expanded">
       <div class="entry-grid">
-        <input id="entryName" placeholder="Customer name" value="${h(d.name)}" />
-        <input id="entryPhone" placeholder="Phone" value="${h(d.phone)}" />
-        <input id="entryAddress1" placeholder="Address" value="${h(d.address1)}" />
-        <input id="entryCity" placeholder="City" value="${h(d.city)}" />
-        <input id="entryState" placeholder="State" value="${h(d.state)}" />
-        <input id="entryZip" placeholder="ZIP" value="${h(d.zip)}" />
+        <input id="entryName" data-keyboard-context="customer-profile-name" placeholder="Customer name" value="${h(d.name)}" />
+        <input id="entryPhone" type="tel" inputmode="tel" autocomplete="tel" data-keyboard-kind="phone" data-keyboard-context="customer-profile-phone" placeholder="Phone" value="${h(phoneDisplayValue(d.phone))}" />
+        <input id="entryAddress1" data-keyboard-context="customer-address" placeholder="Address" value="${h(d.address1)}" />
+        <input id="entryCity" data-keyboard-context="customer-address" placeholder="City" value="${h(d.city)}" />
+        <input id="entryState" data-keyboard-context="customer-address" placeholder="State" value="${h(d.state)}" />
+        <input id="entryZip" data-keyboard-context="customer-address" placeholder="ZIP" value="${h(d.zip)}" />
         <div class="entry-field entry-span-2"><input id="entryAllergies" aria-label="Allergies" placeholder="Allergies" value="${h(d.allergies)}" /></div>
         <div class="entry-field entry-span-2"><textarea id="entryInstructions" aria-label="Customer Notes" placeholder="Customer Notes">${h(d.specialInstructions)}</textarea></div>
       </div>
@@ -3251,6 +4385,129 @@ function openItem(id) {
   render();
 }
 
+function itemModifierGroups(item) {
+  if (!item || !state.idx?.itemMods) return [];
+  return (state.idx.itemMods.get(item.id) || []).map((gid) => state.idx?.groupsById?.[gid]).filter(Boolean);
+}
+
+function groupHasConfigurableOptions(group) {
+  if (!group || !state.idx?.optsByGroup) return false;
+  return (state.idx.optsByGroup.get(group.id) || []).length > 0;
+}
+
+function groupRequiredSelectionCount(group) {
+  const candidate = Number(
+    group?.minSelections
+    ?? group?.minimumSelections
+    ?? group?.minimum
+    ?? group?.min
+    ?? group?.requiredCount
+    ?? (group?.required ? 1 : 0)
+  );
+  return Number.isFinite(candidate) ? Math.max(0, candidate) : 0;
+}
+
+function itemHasConfigurableModifiers(item) {
+  return itemModifierGroups(item).some((group) => groupHasConfigurableOptions(group));
+}
+
+function itemHasRequiredModifiers(item) {
+  return itemModifierGroups(item).some((group) => groupHasConfigurableOptions(group) && groupRequiredSelectionCount(group) > 0);
+}
+
+function shouldShowItemCardActions(item) {
+  return itemHasConfigurableModifiers(item);
+}
+
+function shouldPlusOpenModifierDialog(item) {
+  return itemHasRequiredModifiers(item);
+}
+
+function itemHasModifierGroups(item) {
+  return itemModifierGroups(item).length > 0;
+}
+
+function addItemDirectFromMenuCard(itemId) {
+  const item = lilposDataService.getItemById(itemId);
+  if (!item) return;
+  if (isItemOutOfStock(item)) {
+    alert(`${item.name} is out of stock.`);
+    return;
+  }
+  const menuBoard = document.querySelector('.menu-board');
+  if (menuBoard) {
+    state.restoreMenuBoardScrollTop = menuBoard.scrollTop;
+  }
+  const defaultSize = item.sizeSchema?.[0]?.name || null;
+  const price = item.fixedPrice ? item.basePrice : item.sizeSchema?.[0]?.price || item.basePrice;
+  addItem(item, {
+    size: defaultSize,
+    mods: [],
+    price
+  });
+}
+
+function normalizedModifierCompareEntry(entry) {
+  if (entry && typeof entry === 'object') {
+    return {
+      modifierGroupId: entry.modifierGroupId || null,
+      modifierGroupName: asModifierValue(entry.modifierGroupName || ''),
+      optionId: entry.optionId || null,
+      optionName: asModifierValue(entry.optionName || ''),
+      preModifierType: asModifierValue(entry.preModifierType || ''),
+      preModifierValue: asModifierValue(entry.preModifierValue || ''),
+      preModifierLabel: asModifierValue(entry.preModifierLabel || ''),
+      side: asModifierValue(entry.side || ''),
+      multiplier: Math.max(1, Math.min(3, Number(entry.multiplier || 1))),
+      price: +Number(entry.price || 0).toFixed(2)
+    };
+  }
+  return {
+    modifierGroupId: null,
+    modifierGroupName: '',
+    optionId: null,
+    optionName: asModifierValue(entry),
+    preModifierType: '',
+    preModifierValue: '',
+    preModifierLabel: '',
+    side: '',
+    multiplier: 1,
+    price: 0
+  };
+}
+
+function configurationKeyForLine(item, configured, lineLike = null) {
+  const size = configured?.size ?? lineLike?.size ?? item?.sizeSchema?.[0]?.name ?? null;
+  const modsRaw = Array.isArray(configured?.mods)
+    ? configured.mods
+    : Array.isArray(lineLike?.mods)
+    ? lineLike.mods
+    : [];
+  const mods = modsRaw
+    .map((entry) => normalizedModifierCompareEntry(entry))
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const specialInstruction = String(configured?.specialInstruction ?? lineLike?.specialInstruction ?? '').trim();
+  const forName = String(lineLike?.forName || '').trim();
+  const price = +Number(configured?.price ?? lineLike?.price ?? 0).toFixed(2);
+  return JSON.stringify({
+    itemId: item?.id || lineLike?.itemId || null,
+    size,
+    mods,
+    specialInstruction,
+    forName,
+    price
+  });
+}
+
+function findExactCartLineMatch(item, configured) {
+  const incomingKey = configurationKeyForLine(item, configured, null);
+  return state.cart.find((line) => {
+    if (line.itemId !== item.id) return false;
+    const existingKey = configurationKeyForLine(item, null, line);
+    return existingKey === incomingKey;
+  }) || null;
+}
+
 function addItem(item, configured) {
   if (isItemOutOfStock(item)) return;
   const price = configured?.price ?? (item.fixedPrice ? item.basePrice : item.sizeSchema?.[0]?.price || item.basePrice);
@@ -3265,6 +4522,17 @@ function addItem(item, configured) {
       if (typeof configured.specialInstruction === 'string') line.specialInstruction = configured.specialInstruction;
     }
   } else {
+    const matchingLine = findExactCartLineMatch(item, {
+      ...configured,
+      price
+    });
+    if (matchingLine) {
+      matchingLine.qty = Math.max(1, Number(matchingLine.qty || 1) + 1);
+      state.scrollCartOnAdd = true;
+      state.selected = null;
+      render();
+      return;
+    }
     state.cart.push({
       lineId: uid(),
       itemId: item.id,
@@ -3440,7 +4708,7 @@ function lineTileBody(line) {
   }
   if (line.state === 'claimed') {
     return `
-      ${line.phoneNumber ? `<b>${h(line.phoneNumber)}</b>` : ''}
+      ${line.phoneNumber ? `<b>${h(phoneDisplayValue(line.phoneNumber))}</b>` : ''}
       <small>Claimed</small>
       <small>Claimed by ${h(line.claimedByStation || 'Counter 1')}</small>
     `;
@@ -3449,7 +4717,7 @@ function lineTileBody(line) {
   const sourceMeta = line.rawDetails?.carrier || line.rawDetails?.source;
   const carrier = sourceMeta ? `<small>${h(sourceMeta)}</small>` : '';
   return `
-    ${line.phoneNumber ? `<b>${h(line.phoneNumber)}</b>` : ''}
+    ${line.phoneNumber ? `<b>${h(phoneDisplayValue(line.phoneNumber))}</b>` : ''}
     ${line.callerName ? `<small>${h(line.callerName)}</small>` : ''}
     ${address ? `<small>${h(address)}</small>` : ''}
     ${carrier}
@@ -3511,7 +4779,7 @@ function lineModalHtml() {
     <div class="modal-backdrop">
       <div class="call-modal">
         <h3>Incoming Caller - Line ${line.lineNumber}</h3>
-        ${line.phoneNumber ? `<p><b>Phone:</b> ${h(line.phoneNumber)}</p>` : ''}
+        ${line.phoneNumber ? `<p><b>Phone:</b> ${h(phoneDisplayValue(line.phoneNumber))}</p>` : ''}
         ${line.callerName ? `<p><b>Name:</b> ${h(line.callerName)}</p>` : ''}
         ${address ? `<p><b>Address:</b> ${h(address)}</p>` : ''}
         ${detailRows ? `<ul>${detailRows}</ul>` : ''}
@@ -3552,20 +4820,36 @@ function menuBoardHtml(filtered) {
         ${filtered.map((item) => {
           const cat = state.idx?.catsById[item.categoryId];
           const modCount = state.idx?.itemMods.get(item.id)?.length || 0;
+          const hasConfigurableModifiers = shouldShowItemCardActions(item);
+          const plusOpensModifierDialog = shouldPlusOpenModifierDialog(item);
           const basePrice = item.fixedPrice ? money(item.basePrice) : `${money(item.sizeSchema?.[0]?.price)}+`;
           const oos = isItemOutOfStock(item);
           const hasImage = !!item.imageUrl;
           return `
-            <button class="pos-item ${oos ? 'out-of-stock' : ''} ${hasImage ? 'has-image' : 'no-image'}" data-item="${item.id}">
-              <div class="pos-item-main">
-                <div class="pos-item-text">
-                  <div class="row1"><b>${h(item.name)}</b><span>${h(basePrice)}</span></div>
-                  <div class="row2"><span>${h(cat?.name || '')}</span><span>${modCount} mods</span></div>
-                  ${oos ? `<div class="oos-pill">${h(outOfStockLabel(item))}</div>` : ''}
+            <div class="pos-item-shell ${hasConfigurableModifiers ? 'has-item-actions' : ''}">
+              <button class="pos-item ${oos ? 'out-of-stock' : ''} ${hasImage ? 'has-image' : 'no-image'}" data-item="${item.id}">
+                <div class="pos-item-main">
+                  <div class="pos-item-text ${hasConfigurableModifiers ? 'has-item-actions' : ''}">
+                    <div class="row1"><b>${h(item.name)}</b><span>${h(basePrice)}</span></div>
+                    <div class="row2"><span>${h(cat?.name || '')}</span><span>${modCount} mods</span></div>
+                    ${oos ? `<div class="oos-pill">${h(outOfStockLabel(item))}</div>` : ''}
+                  </div>
+                  ${hasImage ? `<div class="pos-item-image"><img src="${h(item.imageUrl)}" alt="${h(item.name)}" loading="lazy" decoding="async" /></div>` : ''}
                 </div>
-                ${hasImage ? `<div class="pos-item-image"><img src="${h(item.imageUrl)}" alt="${h(item.name)}" loading="lazy" decoding="async" /></div>` : ''}
-              </div>
-            </button>
+              </button>
+              ${hasConfigurableModifiers ? `
+                <div class="pos-item-actions" aria-label="Item actions">
+                  <button
+                    class="icon-btn"
+                    data-item-action="plus"
+                    data-item-action-item="${item.id}"
+                    data-item-plus-dialog="${plusOpensModifierDialog ? '1' : '0'}"
+                    title="${plusOpensModifierDialog ? 'Add with modifiers' : 'Quick add'}"
+                    aria-label="${plusOpensModifierDialog ? 'Add with modifiers' : 'Quick add'}"
+                  >+</button>
+                </div>
+              ` : ''}
+            </div>
           `;
         }).join('')}
         ${allowBlankTap && showItems ? '<div id="gridAddZone" class="grid-add-zone" aria-hidden="true"></div>' : ''}
@@ -3574,16 +4858,49 @@ function menuBoardHtml(filtered) {
   `;
 }
 
+function orderSpecialInstructionsBarHtml() {
+  if (!isNewOrderState()) return '';
+  const locked = !!selectedOrderForDetail();
+  const value = state.orderSpecialInstructions || '';
+  return `
+    <div class="order-special-bar">
+      <div class="order-special-input-wrap ${locked ? 'locked' : ''}">
+        <input
+          id="orderSpecialInstructionsInput"
+          type="text"
+          maxlength="280"
+          placeholder="Special order instructions..."
+          value="${h(value)}"
+          ${locked ? 'disabled' : ''}
+        />
+        <button
+          id="clearOrderSpecialInstructionsBtn"
+          class="order-special-clear-btn"
+          title="Clear special order instructions"
+          aria-label="Clear special order instructions"
+          ${locked || !value ? 'disabled' : ''}
+        >&#10005;</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderHomeMenuView(filtered) {
-  return menuBoardHtml(filtered);
+  return `
+    <section class="center-menu-pane">
+      ${menuBoardHtml(filtered)}
+      ${orderSpecialInstructionsBarHtml()}
+    </section>
+  `;
 }
 
 function renderCustomerManagementView() {
   const q = String(state.customersQuery || '').trim().toLowerCase();
+  const normalizedQ = normalizePhone(state.customersQuery || '');
   const matches = (state.mockCustomers || []).filter((customer) => {
     if (!q) return true;
     const blob = `${customer.name} ${customer.phone} ${customer.address1} ${customer.city} ${customer.state} ${customer.zip}`.toLowerCase();
-    return blob.includes(q);
+    return blob.includes(q) || (normalizedQ ? normalizePhone(customer.phone).includes(normalizedQ) : false);
   });
   const d = state.customerDraft || {};
   return `
@@ -3594,7 +4911,7 @@ function renderCustomerManagementView() {
       </div>
       <div class="menu-tools">
         <div class="search-wrap">
-          <input id="customerMgmtQuery" placeholder="Search customer by name, phone, or address" value="${h(state.customersQuery)}" />
+          <input id="customerMgmtQuery" data-keyboard-kind="text" data-keyboard-context="customer-search" placeholder="Search customer by name, phone, or address" value="${h(state.customersQuery)}" />
         </div>
       </div>
       <div class="customer-mgmt-shell">
@@ -3603,7 +4920,7 @@ function renderCustomerManagementView() {
           ${matches.length ? matches.map((customer) => `
             <button class="customer-result-tile" data-customer-select="${customer.id}">
               <b>${h(customer.name || 'Guest')}</b>
-              <small>${h(customer.phone || 'No phone')}</small>
+              <small>${h(phoneDisplayValue(customer.phone) || 'No phone')}</small>
               <small>${h(customerAddressText(customer) || 'No address')}</small>
             </button>
           `).join('') : '<p class="muted">No matching customers.</p>'}
@@ -3611,12 +4928,12 @@ function renderCustomerManagementView() {
         <div class="customer-mgmt-form customer-entry expanded">
           <h4>Customer Profile</h4>
           <div class="entry-grid">
-            <input id="customerMgmtName" placeholder="Customer name" value="${h(d.name || '')}" />
-            <input id="customerMgmtPhone" placeholder="Phone" value="${h(d.phone || '')}" />
-            <input id="customerMgmtAddress1" placeholder="Street address" value="${h(d.address1 || '')}" />
-            <input id="customerMgmtCity" placeholder="City" value="${h(d.city || '')}" />
-            <input id="customerMgmtState" placeholder="State" value="${h(d.state || '')}" />
-            <input id="customerMgmtZip" placeholder="ZIP" value="${h(d.zip || '')}" />
+            <input id="customerMgmtName" data-keyboard-context="customer-profile-name" placeholder="Customer name" value="${h(d.name || '')}" />
+            <input id="customerMgmtPhone" type="tel" inputmode="tel" autocomplete="tel" data-keyboard-kind="phone" data-keyboard-context="customer-profile-phone" placeholder="Phone" value="${h(phoneDisplayValue(d.phone || ''))}" />
+            <input id="customerMgmtAddress1" data-keyboard-context="customer-address" placeholder="Street address" value="${h(d.address1 || '')}" />
+            <input id="customerMgmtCity" data-keyboard-context="customer-address" placeholder="City" value="${h(d.city || '')}" />
+            <input id="customerMgmtState" data-keyboard-context="customer-address" placeholder="State" value="${h(d.state || '')}" />
+            <input id="customerMgmtZip" data-keyboard-context="customer-address" placeholder="ZIP" value="${h(d.zip || '')}" />
             <input id="customerMgmtAllergies" placeholder="Customer note / allergy note" value="${h(d.allergies || '')}" />
             <input id="customerMgmtInstructions" placeholder="Special instructions" value="${h(d.specialInstructions || '')}" />
           </div>
@@ -3821,6 +5138,28 @@ function renderManagerDevToolsView() {
   `;
 }
 
+function renderManagerKeyboardOptionsView() {
+  const selectedMode = normalizeKeyboardMode(state.keyboardMode);
+  return `
+    <div class="mgr-section-content mgr-keyboard-options-view">
+      <h3>Keyboard Options</h3>
+      <div class="mgr-setting-row mgr-keyboard-setting-row">
+        <div class="mgr-setting-label-wrap">
+          <b class="mgr-setting-label">Keyboard Options</b>
+          <small class="muted">Choose how LilPOS shows on-screen keyboard UI for supported inputs.</small>
+        </div>
+        <div class="mgr-setting-control mgr-keyboard-radio-group" role="radiogroup" aria-label="Keyboard Options">
+          <label><input type="radio" name="keyboardMode" value="micro" data-keyboard-mode="micro" ${selectedMode === 'micro' ? 'checked' : ''} /> Micro Keyboard</label>
+          <label><input type="radio" name="keyboardMode" value="compact-footer" data-keyboard-mode="compact-footer" ${selectedMode === 'compact-footer' ? 'checked' : ''} /> Compact Footer Keyboard</label>
+          <label><input type="radio" name="keyboardMode" value="standard-qwerty" data-keyboard-mode="standard-qwerty" ${selectedMode === 'standard-qwerty' ? 'checked' : ''} /> Standard QWERTY</label>
+          <label><input type="radio" name="keyboardMode" value="external" data-keyboard-mode="external" ${selectedMode === 'external' ? 'checked' : ''} /> External Keyboard</label>
+        </div>
+      </div>
+      <div class="mgr-setting-note muted">Current: ${h(keyboardModeLabel(selectedMode))}</div>
+    </div>
+  `;
+}
+
 const MANAGER_SETTINGS_TILES = [
   { id: 'system',      icon: '&#9881;',  title: 'System Status',     desc: 'Menu cache, online/offline, software status' },
   { id: 'install',     icon: '&#128640;',title: 'Application & Installation', desc: 'Install app, PWA features' },
@@ -3834,6 +5173,7 @@ const MANAGER_SETTINGS_TILES = [
   { id: 'payments',    icon: '&#36;',    title: 'Payments',          desc: 'Payment methods and terminals' },
   { id: 'employees',   icon: '&#128100;',title: 'Employees',         desc: 'Employee records and PINs' },
   { id: 'permissions', icon: '&#128274;',title: 'Permissions',       desc: 'Role-based access control' },
+  { id: 'keyboard',    icon: '&#9000;',  title: 'Keyboard Options',  desc: 'On-screen keyboard mode and behavior' },
   { id: 'stations',    icon: '&#128421;',title: 'Stations',          desc: 'Register and station settings' },
   { id: 'ordersettings', icon: '&#128203;', title: 'Order Settings', desc: 'Order types, timing, and defaults' },
   { id: 'reports',     icon: '&#128200;',title: 'Reports',           desc: 'Sales summaries and activity' },
@@ -3889,6 +5229,22 @@ function renderManagerSettingsView() {
         </div>
         <div class="mgr-section-wrapper">
           ${renderManagerDevToolsView()}
+        </div>
+      </div>
+    `;
+  }
+  if (activeSection === 'keyboard') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrKeyboardBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          ${renderManagerKeyboardOptionsView()}
         </div>
       </div>
     `;
@@ -3971,7 +5327,7 @@ function previousOrderCustomerBubbleHtml(customer) {
     <div class="customer-summary previous-order-customer previous-order-customer-populated">
       <div class="sum-top">
         <b>${h(safeCustomer.name || 'Guest')}</b>
-        ${safeCustomer.phone ? `<span>${h(safeCustomer.phone)}</span>` : ''}
+        ${safeCustomer.phone ? `<span>${h(phoneDisplayValue(safeCustomer.phone))}</span>` : ''}
       </div>
       ${safeCustomer.address1 ? `<small><b>Address:</b> ${h(safeCustomer.address1)}</small>` : ''}
       ${cityStateZip ? `<small><b>City/State/Zip:</b> ${h(cityStateZip)}</small>` : ''}
@@ -4001,6 +5357,7 @@ function renderOrderDetailInTicketPane() {
       <div class="order-payment-badge ${paidClass}">${paidText}</div>
       <small>${h(typeLabel)} | ${h(order.status)} | ${h(order.paymentStatus || 'unpaid')} | ${h(order.timeLabel || '')}</small>
       <small>${h(timingLabel)}</small>
+      ${order.orderSpecialInstructions ? `<small><b>Order Instructions:</b> ${h(order.orderSpecialInstructions)}</small>` : ''}
       ${previousOrderCustomerBubbleHtml(customer)}
       <div class="order-detail-lines">
         ${(order.lines || []).map((line) => {
@@ -4036,6 +5393,7 @@ function renderOrderDetailInTicketPane() {
 
 function ticketPanelHtml() {
   const viewingPreviousOrder = !!selectedOrderForDetail();
+  const showOrderSpecialInstructions = isNewOrderState();
   const sendState = getSendActionState(state.cart, state.orderType);
   const canCancelSale = state.cart.length > 0;
   const orderTypeLabel = ORDER_TYPES[state.orderType] || state.orderType;
@@ -4060,11 +5418,23 @@ function ticketPanelHtml() {
         </div>
       </div>
       <div class="order-type ticket-section">
-        <button data-order-type="pickup" class="pill ${state.orderType === 'pickup' ? 'active' : ''}"><span class="order-phone-icon">☎</span>Pickup</button>
-        <button data-order-type="delivery" class="pill ${state.orderType === 'delivery' ? 'active' : ''}"><span class="order-phone-icon">☎</span>Delivery</button>
-        <button data-order-type="togo" class="pill ${state.orderType === 'togo' ? 'active' : ''}">To-Go</button>
-        <button data-order-type="tostay" class="pill ${state.orderType === 'tostay' ? 'active' : ''}">To-Stay</button>
-        ${businessSettings.dineInEnabled ? `<button data-order-type="dinein" class="pill ${state.orderType === 'dinein' ? 'active' : ''}">Dine-In</button>` : ''}
+        <button data-order-type="pickup" class="pill order-type-tile ${state.orderType === 'pickup' ? 'active' : ''}">
+          <span class="order-type-icon" aria-hidden="true">🚶</span>
+          <span class="order-type-label">Pickup</span>
+        </button>
+        <button data-order-type="delivery" class="pill order-type-tile ${state.orderType === 'delivery' ? 'active' : ''}">
+          <span class="order-type-icon" aria-hidden="true">🚚</span>
+          <span class="order-type-label">Delivery</span>
+        </button>
+        <button data-order-type="togo" class="pill order-type-tile ${state.orderType === 'togo' ? 'active' : ''}">
+          <span class="order-type-icon" aria-hidden="true">🛍</span>
+          <span class="order-type-label">To-Go</span>
+        </button>
+        <button data-order-type="tostay" class="pill order-type-tile ${state.orderType === 'tostay' ? 'active' : ''}">
+          <span class="order-type-icon" aria-hidden="true">🍽</span>
+          <span class="order-type-label">To-Stay</span>
+        </button>
+        ${businessSettings.dineInEnabled ? `<button data-order-type="dinein" class="pill order-type-tile ${state.orderType === 'dinein' ? 'active' : ''}"><span class="order-type-icon" aria-hidden="true">🪑</span><span class="order-type-label">Dine-In</span></button>` : ''}
       </div>
       ${renderOrderDetailInTicketPane()}
       ${state.deliveryInfoMissing ? '<div class="ticket-section delivery-warning">Delivery requires customer name, phone, and address.</div>' : ''}
@@ -4103,6 +5473,7 @@ function ticketPanelHtml() {
         `).join('')}
       </div>
       <div class="ticket-footer ticket-section">
+        ${showOrderSpecialInstructions ? `<div id="orderSpecialInstructionsLive" class="order-special-live ${state.orderSpecialInstructions ? '' : 'is-hidden'}">${state.orderSpecialInstructions ? `Special Instructions: ${h(state.orderSpecialInstructions)}` : ''}</div>` : ''}
         <div class="totals">
           <div><span>Subtotal</span><b>${money(cartTotal())}</b></div>
           <div><span>Tax</span><b>${money(ticketTax())}</b></div>
@@ -4218,12 +5589,12 @@ function deliveryProfileDialogHtml() {
         <h3>Delivery Customer Required</h3>
         <p>Name, phone, and address are required for Delivery.</p>
         <div class="entry-grid">
-          <input id="deliveryName" placeholder="Customer name *" value="${h(d.name)}" />
-          <input id="deliveryPhone" placeholder="Phone *" value="${h(d.phone)}" />
-          <input id="deliveryAddress1" placeholder="Address *" value="${h(d.address1)}" />
-          <input id="deliveryCity" placeholder="City" value="${h(d.city)}" />
-          <input id="deliveryState" placeholder="State" value="${h(d.state)}" />
-          <input id="deliveryZip" placeholder="ZIP" value="${h(d.zip)}" />
+          <input id="deliveryName" data-keyboard-context="customer-profile-name" placeholder="Customer name *" value="${h(d.name)}" />
+          <input id="deliveryPhone" type="tel" inputmode="tel" autocomplete="tel" data-keyboard-kind="phone" data-keyboard-context="customer-profile-phone" placeholder="Phone *" value="${h(phoneDisplayValue(d.phone))}" />
+          <input id="deliveryAddress1" data-keyboard-context="customer-address" placeholder="Address *" value="${h(d.address1)}" />
+          <input id="deliveryCity" data-keyboard-context="customer-address" placeholder="City" value="${h(d.city)}" />
+          <input id="deliveryState" data-keyboard-context="customer-address" placeholder="State" value="${h(d.state)}" />
+          <input id="deliveryZip" data-keyboard-context="customer-address" placeholder="ZIP" value="${h(d.zip)}" />
           <input id="deliveryAllergies" placeholder="Allergies" value="${h(d.allergies)}" />
           <input id="deliveryInstructions" placeholder="Special instructions" value="${h(d.specialInstructions)}" />
         </div>
@@ -4249,12 +5620,12 @@ function payNowMissingDialogHtml() {
         <p>Complete required details to continue with Send &amp; Pay Now.</p>
         ${issueItems ? `<ul>${issueItems}</ul>` : ''}
         <div class="entry-grid">
-          <input id="payNowMissingName" placeholder="Customer name" value="${h(d.name)}" />
-          <input id="payNowMissingPhone" placeholder="Phone" value="${h(d.phone)}" />
-          <input id="payNowMissingAddress1" placeholder="Address" value="${h(d.address1)}" />
-          <input id="payNowMissingCity" placeholder="City" value="${h(d.city)}" />
-          <input id="payNowMissingState" placeholder="State" value="${h(d.state)}" />
-          <input id="payNowMissingZip" placeholder="ZIP" value="${h(d.zip)}" />
+          <input id="payNowMissingName" data-keyboard-context="customer-profile-name" placeholder="Customer name" value="${h(d.name)}" />
+          <input id="payNowMissingPhone" type="tel" inputmode="tel" autocomplete="tel" data-keyboard-kind="phone" data-keyboard-context="customer-profile-phone" placeholder="Phone" value="${h(phoneDisplayValue(d.phone))}" />
+          <input id="payNowMissingAddress1" data-keyboard-context="customer-address" placeholder="Address" value="${h(d.address1)}" />
+          <input id="payNowMissingCity" data-keyboard-context="customer-address" placeholder="City" value="${h(d.city)}" />
+          <input id="payNowMissingState" data-keyboard-context="customer-address" placeholder="State" value="${h(d.state)}" />
+          <input id="payNowMissingZip" data-keyboard-context="customer-address" placeholder="ZIP" value="${h(d.zip)}" />
           <input id="payNowMissingAllergies" placeholder="Allergies" value="${h(d.allergies)}" />
           <input id="payNowMissingInstructions" placeholder="Special instructions" value="${h(d.specialInstructions)}" />
         </div>
@@ -4292,12 +5663,12 @@ function payLaterMissingDialogHtml() {
         <p>Complete required details to continue with Send &amp; Pay Later.</p>
         ${issueItems ? `<ul>${issueItems}</ul>` : ''}
         <div class="entry-grid">
-          <input id="payLaterMissingName" placeholder="Customer name" value="${h(d.name)}" />
-          <input id="payLaterMissingPhone" placeholder="Phone" value="${h(d.phone)}" />
-          <input id="payLaterMissingAddress1" placeholder="Address" value="${h(d.address1)}" />
-          <input id="payLaterMissingCity" placeholder="City" value="${h(d.city)}" />
-          <input id="payLaterMissingState" placeholder="State" value="${h(d.state)}" />
-          <input id="payLaterMissingZip" placeholder="ZIP" value="${h(d.zip)}" />
+          <input id="payLaterMissingName" data-keyboard-context="customer-profile-name" placeholder="Customer name" value="${h(d.name)}" />
+          <input id="payLaterMissingPhone" type="tel" inputmode="tel" autocomplete="tel" data-keyboard-kind="phone" data-keyboard-context="customer-profile-phone" placeholder="Phone" value="${h(phoneDisplayValue(d.phone))}" />
+          <input id="payLaterMissingAddress1" data-keyboard-context="customer-address" placeholder="Address" value="${h(d.address1)}" />
+          <input id="payLaterMissingCity" data-keyboard-context="customer-address" placeholder="City" value="${h(d.city)}" />
+          <input id="payLaterMissingState" data-keyboard-context="customer-address" placeholder="State" value="${h(d.state)}" />
+          <input id="payLaterMissingZip" data-keyboard-context="customer-address" placeholder="ZIP" value="${h(d.zip)}" />
           <input id="payLaterMissingAllergies" placeholder="Allergies" value="${h(d.allergies)}" />
           <input id="payLaterMissingInstructions" placeholder="Special instructions" value="${h(d.specialInstructions)}" />
         </div>
@@ -4347,9 +5718,9 @@ function paymentDialogHtml() {
           <div class="payment-row">
             ${tipModes.map((mode) => `<button class="chip ${d.tipMode === mode.id ? 'active' : ''}" data-tip-mode="${mode.id}">${mode.label}</button>`).join('')}
           </div>
-          ${d.tipMode === 'custom' ? `<input id="paymentCustomTip" class="editor-input" type="text" inputmode="numeric" placeholder="Custom tip" value="${h(d.customTip)}" />` : ''}
+          ${d.tipMode === 'custom' ? `<input id="paymentCustomTip" class="editor-input" type="text" inputmode="decimal" data-keyboard-kind="decimal" placeholder="Custom tip" value="${h(d.customTip)}" />` : ''}
           <div class="payment-entry-row">
-            <input id="paymentEntryAmount" class="editor-input" type="text" inputmode="numeric" placeholder="Payment amount" value="${h(d.entryAmount)}" />
+            <input id="paymentEntryAmount" class="editor-input" type="text" inputmode="decimal" data-keyboard-kind="decimal" placeholder="Payment amount" value="${h(d.entryAmount)}" />
             <button id="addPaymentLine" class="btn-success">Add Payment</button>
           </div>
           <div class="payment-keypad">
@@ -4425,7 +5796,7 @@ function addItemDialogHtml() {
           </label>
           <label>
             Base Price
-            <input id="newItemPrice" class="editor-input" type="text" inputmode="numeric" value="${h(d.price)}" placeholder="Required" />
+            <input id="newItemPrice" class="editor-input" type="text" inputmode="decimal" data-keyboard-kind="decimal" value="${h(d.price)}" placeholder="Required" />
           </label>
           <label>
             Description / Short Label
@@ -4466,7 +5837,7 @@ function itemQuickEditDialogHtml() {
         <div class="add-item-form">
           <label>
             Current Item Price
-            <input id="quickItemPrice" class="editor-input" type="text" inputmode="numeric" value="${h(editor.price)}" />
+            <input id="quickItemPrice" class="editor-input" type="text" inputmode="decimal" data-keyboard-kind="decimal" value="${h(editor.price)}" />
           </label>
           <label>
             Stock Status
@@ -4749,9 +6120,19 @@ function render() {
       }
     });
   }
+
+  if (typeof state.restoreMenuBoardScrollTop === 'number') {
+    const restoreTop = state.restoreMenuBoardScrollTop;
+    state.restoreMenuBoardScrollTop = null;
+    requestAnimationFrame(() => {
+      const menuBoard = document.querySelector('.menu-board');
+      if (!menuBoard) return;
+      menuBoard.scrollTop = restoreTop;
+    });
+  }
 }
 
-function updateSearchQuery(next, cursorPos) {
+function updateSearchQuery(next, cursorPos, preserveFocus = true) {
   const prev = state.query;
   if (!prev.trim() && next.trim()) {
     state.preSearchCategory = state.category;
@@ -4762,8 +6143,10 @@ function updateSearchQuery(next, cursorPos) {
     state.category = state.preSearchCategory;
     state.preSearchCategory = null;
   }
-  state.searchRefocus = true;
-  state.searchCursorPos = typeof cursorPos === 'number' ? cursorPos : next.length;
+  state.searchRefocus = !!preserveFocus;
+  if (preserveFocus) {
+    state.searchCursorPos = typeof cursorPos === 'number' ? cursorPos : next.length;
+  }
   render();
 }
 
@@ -4837,6 +6220,19 @@ function attachEvents() {
   $('#mgrDevToolsBack')?.addEventListener('click', () => {
     state.managerSettingsSection = null;
     render();
+  });
+  $('#mgrKeyboardBack')?.addEventListener('click', () => {
+    state.managerSettingsSection = null;
+    render();
+  });
+
+  document.querySelectorAll('input[name="keyboardMode"][data-keyboard-mode]').forEach((input) => {
+    input.addEventListener('change', () => {
+      const target = input as HTMLInputElement;
+      if (!target.checked) return;
+      keyboardController.setKeyboardMode(target.value);
+      render();
+    });
   });
 
   $('#managerSettingsBtn')?.addEventListener('click', () => {
@@ -4974,7 +6370,7 @@ function attachEvents() {
 
   const queryInput = $('#query');
   queryInput?.addEventListener('input', (e) => updateSearchQuery(e.target.value, e.target.selectionStart));
-  queryInput?.addEventListener('change', (e) => updateSearchQuery(e.target.value, e.target.selectionStart));
+  queryInput?.addEventListener('change', (e) => updateSearchQuery(e.target.value, e.target.selectionStart, false));
 
   $('#clearSearch')?.addEventListener('click', () => {
     state.query = '';
@@ -4983,6 +6379,28 @@ function attachEvents() {
       state.preSearchCategory = null;
     }
     render();
+  });
+
+  $('#orderSpecialInstructionsInput')?.addEventListener('input', (e) => {
+    setActiveOrderSpecialInstructions(e.target.value);
+    syncOrderSpecialInstructionsLiveUi();
+  });
+
+  $('#orderSpecialInstructionsInput')?.addEventListener('change', (e) => {
+    setActiveOrderSpecialInstructions(e.target.value);
+    syncOrderSpecialInstructionsLiveUi();
+  });
+
+  $('#clearOrderSpecialInstructionsBtn')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    clearActiveOrderSpecialInstructions();
+    const input = document.querySelector('#orderSpecialInstructionsInput');
+    if (input) {
+      input.value = '';
+      input.focus();
+    }
+    syncOrderSpecialInstructionsLiveUi();
   });
 
   document.querySelectorAll('[data-cat]').forEach((b) => {
@@ -5017,6 +6435,24 @@ function attachEvents() {
 
   document.querySelectorAll('[data-item]').forEach((b) => {
     bindItemTilePress(b, b.dataset.item);
+  });
+
+  document.querySelectorAll('[data-item-action]').forEach((b) => {
+    b.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const itemId = b.dataset.itemActionItem;
+      if (!itemId) return;
+      if (b.dataset.itemAction === 'plus') {
+        const item = lilposDataService.getItemById(itemId);
+        if (!item) return;
+        if (b.dataset.itemPlusDialog === '1') {
+          openItem(itemId);
+          return;
+        }
+        addItemDirectFromMenuCard(itemId);
+      }
+    });
   });
 
   document.querySelectorAll('[data-open-order]').forEach((b) => {
@@ -5097,7 +6533,7 @@ function attachEvents() {
     state.customerDraft.name = e.target.value;
   });
   $('#customerMgmtPhone')?.addEventListener('input', (e) => {
-    state.customerDraft.phone = e.target.value;
+    state.customerDraft.phone = syncPhoneInputMask(e.target as HTMLInputElement);
   });
   $('#customerMgmtAddress1')?.addEventListener('input', (e) => {
     state.customerDraft.address1 = e.target.value;
@@ -5172,7 +6608,7 @@ function attachEvents() {
     state.customerDraft.name = e.target.value;
   });
   $('#entryPhone')?.addEventListener('input', (e) => {
-    state.customerDraft.phone = e.target.value;
+    state.customerDraft.phone = syncPhoneInputMask(e.target as HTMLInputElement);
   });
   $('#entryAddress1')?.addEventListener('input', (e) => {
     state.customerDraft.address1 = e.target.value;
@@ -5200,7 +6636,7 @@ function attachEvents() {
     state.deliveryProfileDialog.draft.name = e.target.value;
   });
   $('#deliveryPhone')?.addEventListener('input', (e) => {
-    state.deliveryProfileDialog.draft.phone = e.target.value;
+    state.deliveryProfileDialog.draft.phone = syncPhoneInputMask(e.target as HTMLInputElement);
   });
   $('#deliveryAddress1')?.addEventListener('input', (e) => {
     state.deliveryProfileDialog.draft.address1 = e.target.value;
@@ -5239,7 +6675,7 @@ function attachEvents() {
     state.payNowMissingDialog.draft.name = e.target.value;
   });
   $('#payNowMissingPhone')?.addEventListener('input', (e) => {
-    state.payNowMissingDialog.draft.phone = e.target.value;
+    state.payNowMissingDialog.draft.phone = syncPhoneInputMask(e.target as HTMLInputElement);
   });
   $('#payNowMissingAddress1')?.addEventListener('input', (e) => {
     state.payNowMissingDialog.draft.address1 = e.target.value;
@@ -5335,7 +6771,7 @@ function attachEvents() {
     state.payLaterMissingDialog.draft.name = e.target.value;
   });
   $('#payLaterMissingPhone')?.addEventListener('input', (e) => {
-    state.payLaterMissingDialog.draft.phone = e.target.value;
+    state.payLaterMissingDialog.draft.phone = syncPhoneInputMask(e.target as HTMLInputElement);
   });
   $('#payLaterMissingAddress1')?.addEventListener('input', (e) => {
     state.payLaterMissingDialog.draft.address1 = e.target.value;
@@ -5689,6 +7125,9 @@ function attachEvents() {
   });
 }
 
+hydrateManagerSettingsFromStorage();
+installKeyboardLifecycleEvents();
+keyboardController.setKeyboardMode(state.keyboardMode, { persist: false });
 render();
 loadFromDb();
 
