@@ -89,6 +89,14 @@ type IntentSuggestionContext = {
   activeCustomerId?: string;
 };
 
+const ORDER_SPECIAL_INSTRUCTION_CHIPS = [
+  'Bell broken please knock',
+  'Call when arrive',
+  'Leave at door',
+  'Bring change 50',
+  'Bring change 100'
+];
+
 const DEFAULT_KEYBOARD_MODE: KeyboardMode = 'micro';
 
 // Order Persistence Module
@@ -489,9 +497,9 @@ function intentFieldTypeForInput(target): IntentFieldType {
   if (/entryphone|customermgmtphone|deliveryphone|paynowmissingphone|paylatermissingphone/.test(id)) return 'customer-profile-phone';
   if (/entryaddress1|customermgmtaddress1|deliveryaddress1|paynowmissingaddress1|paylatermissingaddress1|entrycity|customermgmtcity|deliverycity|paynowmissingcity|paylatermissingcity|entrystate|customermgmtstate|deliverystate|paynowmissingstate|paylatermissingstate|entryzip|customermgmtzip|deliveryzip|paynowmissingzip|paylatermissingzip/.test(id)) return 'customer-address';
   if (/instructions|notes/.test(blob)) {
-    if (/pizza|item-specific|special instruction/.test(blob)) return 'modifier-instructions';
+    if (/pizza|item-specific/.test(blob)) return 'modifier-instructions';
     if (/order special/.test(blob)) return 'special-instructions';
-    return 'special-instructions';
+    return 'generic-text';
   }
   if (/customer name/.test(blob)) return 'customer-profile-name';
   if (/address|city|state|zip/.test(blob)) return 'customer-address';
@@ -637,7 +645,17 @@ function localCustomerSearchCandidates() {
   return Array.from(candidates.values());
 }
 
-function localInstructionCandidates(context: IntentSuggestionContext) {
+function localOrderSpecialInstructionCandidates() {
+  return ORDER_SPECIAL_INSTRUCTION_CHIPS.map((phrase, index) => ({
+    label: phrase,
+    value: phrase,
+    action: 'replace-input',
+    source: 'order-tag',
+    weight: 200 - index
+  }));
+}
+
+function localModifierInstructionCandidates(context: IntentSuggestionContext) {
   const candidates = new Map();
   const addPhrase = (phrase, source = 'recent', weight = 60) => {
     if (!looksInstructionLikePhrase(phrase)) return;
@@ -650,9 +668,6 @@ function localInstructionCandidates(context: IntentSuggestionContext) {
     });
   };
 
-  (state.mockCustomers || []).forEach((customer, index) => addPhrase(customer?.specialInstructions, 'customer', 80 - index));
-  addPhrase(state.customerDraft?.specialInstructions, 'recent', 80);
-  addPhrase(state.orderSpecialInstructions, 'order-tag', 90);
   addPhrase(state.selectedConfig?.pizzaNotes, 'modifier', 85);
   (state.cart || []).forEach((line, index) => addPhrase(line?.specialInstruction, 'recent', 70 - index));
 
@@ -715,12 +730,33 @@ function getIntentChips(context: IntentSuggestionContext): IntentChip[] {
     return filteredIntentChips(candidates, context, 8);
   }
 
-  if (context.fieldType === 'special-instructions' || context.fieldType === 'modifier-instructions') {
-    const candidates = localInstructionCandidates(context);
+  if (context.fieldType === 'special-instructions') {
+    const candidates = localOrderSpecialInstructionCandidates();
+    return filteredIntentChips(candidates, context, 8);
+  }
+
+  if (context.fieldType === 'modifier-instructions') {
+    const candidates = localModifierInstructionCandidates(context);
     return filteredIntentChips(candidates, context, 8);
   }
 
   return [];
+}
+
+function disableNativeInputSuggestions(field: HTMLInputElement | HTMLTextAreaElement) {
+  if (!field) return;
+
+  if (field instanceof HTMLInputElement && field.type === 'search') {
+    field.type = 'text';
+  }
+
+  field.setAttribute('autocomplete', 'new-password');
+  field.setAttribute('autocorrect', 'off');
+  field.setAttribute('autocapitalize', 'off');
+  field.setAttribute('spellcheck', 'false');
+  field.setAttribute('data-lilpos-keyboard', 'true');
+  field.setAttribute('data-form-type', 'other');
+  field.setAttribute('aria-autocomplete', 'none');
 }
 
 const keyboardController = (() => {
@@ -1203,6 +1239,7 @@ const keyboardController = (() => {
       hideKeyboard();
       return;
     }
+    disableNativeInputSuggestions(inputElement);
     activeInput = inputElement;
     activeInputKind = getKeyboardInputKind(inputElement);
     activeIntentFieldType = activeInputKind === 'text' ? intentFieldTypeForInput(inputElement) : 'generic-text';
@@ -4805,7 +4842,7 @@ function menuBoardHtml(filtered) {
     <section class="menu-board">
       <div class="menu-tools">
         <div class="search-wrap">
-          <input id="query" placeholder="Search menu..." value="${h(state.query)}" />
+          <input id="query" type="text" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lilpos-keyboard="true" data-form-type="other" aria-autocomplete="none" placeholder="Search menu..." value="${h(state.query)}" />
         </div>
         <button id="clearSearch" class="btn-secondary" ${state.query ? '' : 'disabled'}>Clear Search</button>
         <button id="toggleActivity" class="btn-secondary">Incoming</button>
@@ -4867,6 +4904,7 @@ function orderSpecialInstructionsBarHtml() {
       <div class="order-special-input-wrap ${locked ? 'locked' : ''}">
         <input
           id="orderSpecialInstructionsInput"
+          data-keyboard-context="special-instructions"
           type="text"
           maxlength="280"
           placeholder="Special order instructions..."
@@ -6085,6 +6123,7 @@ function render() {
       ${addItemDialogHtml()}
     </div>
   `;
+  applyBrowserInputSuggestionGuards();
   attachEvents();
 
   if (state.searchRefocus) {
@@ -6130,6 +6169,16 @@ function render() {
       menuBoard.scrollTop = restoreTop;
     });
   }
+}
+
+function applyBrowserInputSuggestionGuards() {
+  const root = document.getElementById('app');
+  if (!root) return;
+  root.querySelectorAll('input, textarea').forEach((field) => {
+    const input = field as HTMLInputElement | HTMLTextAreaElement;
+    if (!keyboardController.isSupportedInput(input)) return;
+    disableNativeInputSuggestions(input);
+  });
 }
 
 function updateSearchQuery(next, cursorPos, preserveFocus = true) {
