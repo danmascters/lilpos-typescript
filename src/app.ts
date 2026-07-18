@@ -42,7 +42,8 @@ const DEFAULT_MANAGER_PIN = '1234';
 const ORDER_MGMT_FILTERS = {
   open: 'open',
   completed: 'completed',
-  online: 'online'
+  online: 'online',
+  future: 'future'
 };
 
 const STATION_NUMBER = 1; // Default station number, centralize here for future wire-up
@@ -53,6 +54,8 @@ type KeyboardMode =
   | 'compact-footer'
   | 'standard-qwerty'
   | 'external';
+
+type KeyboardContext = 'text' | 'numeric' | 'phone' | 'money';
 
 type IntentFieldType =
   | 'customer-search'
@@ -292,6 +295,19 @@ const state: any = {
     zip: '',
     allergies: '',
     specialInstructions: ''
+  },
+  focusCustomerEntryOnRender: false,
+  orderTypeDraftDialog: {
+    open: false,
+    type: null,
+    name: '',
+    phone: '',
+    tableNumber: ''
+  },
+  orderTypeDetails: {
+    togoName: '',
+    togoPhone: '',
+    dineInTableNumber: ''
   },
   mockCustomers: [],
   mockOrders: [],
@@ -761,7 +777,16 @@ function disableNativeInputSuggestions(field: HTMLInputElement | HTMLTextAreaEle
 
 const keyboardController = (() => {
   let mode: KeyboardMode = DEFAULT_KEYBOARD_MODE;
-  let activeInput: HTMLInputElement | HTMLTextAreaElement | null = null;
+  let activeKeyboardTarget: HTMLInputElement | HTMLTextAreaElement | null = null;
+  let activeTargetLocator: {
+    id: string;
+    name: string;
+    keyboardContext: string;
+    keyboardKind: string;
+  } | null = null;
+  let keyboardVisible = false;
+  let lastKnownSelection: { start: number; end: number } | null = null;
+  let suppressFocusOutClose = false;
   let rootEl: HTMLElement | null = null;
   const MICRO_KEYBOARD_GAP = 8;
   let activeInputKind: 'text' | 'numeric' | 'decimal' | 'phone' | 'pin' = 'text';
@@ -794,35 +819,107 @@ const keyboardController = (() => {
     return mode !== 'external';
   }
 
+  function buildTargetLocator(target) {
+    if (!target) return null;
+    return {
+      id: String(target.id || ''),
+      name: String(target.name || ''),
+      keyboardContext: String(target.getAttribute?.('data-keyboard-context') || '').toLowerCase(),
+      keyboardKind: String(target.getAttribute?.('data-keyboard-kind') || target.getAttribute?.('data-keyboard') || '').toLowerCase()
+    };
+  }
+
+  function findSupportedTarget(predicate) {
+    const all = Array.from(document.querySelectorAll('input, textarea')) as Array<HTMLInputElement | HTMLTextAreaElement>;
+    for (const candidate of all) {
+      if (!isSupportedInput(candidate)) continue;
+      if (predicate(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  function resolveActiveKeyboardTarget() {
+    if (activeKeyboardTarget && document.contains(activeKeyboardTarget)) return activeKeyboardTarget;
+    if (!activeTargetLocator) return null;
+
+    let nextTarget: HTMLInputElement | HTMLTextAreaElement | null = null;
+    if (activeTargetLocator.id) {
+      const byId = document.getElementById(activeTargetLocator.id);
+      if (isSupportedInput(byId)) {
+        nextTarget = byId as HTMLInputElement | HTMLTextAreaElement;
+      }
+    }
+    if (!nextTarget && activeTargetLocator.name) {
+      nextTarget = findSupportedTarget((candidate) => String(candidate.name || '') === activeTargetLocator?.name);
+    }
+    if (!nextTarget && activeTargetLocator.keyboardContext) {
+      nextTarget = findSupportedTarget((candidate) => String(candidate.getAttribute('data-keyboard-context') || '').toLowerCase() === activeTargetLocator?.keyboardContext);
+    }
+    if (!nextTarget && activeTargetLocator.keyboardKind) {
+      nextTarget = findSupportedTarget((candidate) => String(candidate.getAttribute('data-keyboard-kind') || candidate.getAttribute('data-keyboard') || '').toLowerCase() === activeTargetLocator?.keyboardKind);
+    }
+
+    activeKeyboardTarget = nextTarget;
+    return activeKeyboardTarget;
+  }
+
+  function markInternalPointerInteraction() {
+    suppressFocusOutClose = true;
+  }
+
+  function isElementInsideKeyboard(element) {
+    if (!element || !(element instanceof Element)) return false;
+    const root = ensureRoot();
+    return root.contains(element);
+  }
+
+  function getKeyboardContextForTarget(target): KeyboardContext {
+    if (!target) return 'text';
+
+    const rawContext = String(target.getAttribute?.('data-keyboard-context') || '').toLowerCase();
+    const rawKeyboardAttr = String(target.getAttribute?.('data-keyboard') || '').toLowerCase();
+    const rawKeyboardKind = String(target.getAttribute?.('data-keyboard-kind') || '').toLowerCase();
+    const declaredKind = rawKeyboardKind || rawKeyboardAttr;
+
+    if (declaredKind === 'numeric' || declaredKind === 'number') return 'numeric';
+    if (declaredKind === 'decimal' || declaredKind === 'money' || declaredKind === 'currency') return 'money';
+    if (declaredKind === 'phone' || declaredKind === 'tel') return 'phone';
+    if (declaredKind === 'text') return 'text';
+
+    if (target instanceof HTMLInputElement) {
+      const type = String(target.type || '').toLowerCase();
+      const inputMode = String(target.inputMode || target.getAttribute('inputmode') || '').toLowerCase();
+
+      if (type === 'number' || inputMode === 'numeric') return 'numeric';
+      if (inputMode === 'decimal') return 'money';
+      if (type === 'tel' || inputMode === 'tel') return 'phone';
+    }
+
+    const idNameBlob = `${target.id || ''} ${target.name || ''} ${target.className || ''} ${target.placeholder || ''}`.toLowerCase();
+    if (/price|amount|tip|payment|currency|cash|total/.test(idNameBlob)) return 'money';
+    if (/zip|qty|quantity|count|modifiercount|stockdays/.test(idNameBlob)) return 'numeric';
+    if (/phone|mobile|tel/.test(idNameBlob) || rawContext === 'customer-profile-phone') return 'phone';
+
+    if (rawContext === 'numeric') return 'numeric';
+    if (rawContext === 'money' || rawContext === 'decimal') return 'money';
+    if (rawContext === 'phone') return 'phone';
+
+    return 'text';
+  }
+
   function getKeyboardInputKind(target): 'text' | 'numeric' | 'decimal' | 'phone' | 'pin' {
     if (!target) return 'text';
-    const contextAttr = String(target.getAttribute?.('data-keyboard-context') || '').toLowerCase();
-    if (contextAttr === 'customer-profile-phone') return 'phone';
-    if (contextAttr === 'customer-search' || contextAttr === 'customer-profile-name' || contextAttr === 'customer-address' || contextAttr === 'menu-search' || contextAttr === 'special-instructions' || contextAttr === 'modifier-instructions' || contextAttr === 'generic-text') {
-      return 'text';
+    if (target instanceof HTMLInputElement) {
+      const type = String(target.type || '').toLowerCase();
+      const idNameBlob = `${target.id || ''} ${target.name || ''} ${target.className || ''} ${target.placeholder || ''}`.toLowerCase();
+      if (type === 'password' && /pin/.test(idNameBlob)) return 'pin';
+      if (String(target.getAttribute('data-keyboard-kind') || target.getAttribute('data-keyboard') || '').toLowerCase() === 'pin') return 'pin';
     }
-    if (contextAttr === 'numeric') return 'numeric';
 
-    const attrKind = String(target.getAttribute?.('data-keyboard-kind') || '').toLowerCase();
-    if (attrKind === 'numeric' || attrKind === 'decimal' || attrKind === 'phone' || attrKind === 'pin' || attrKind === 'text') {
-      return attrKind as 'text' | 'numeric' | 'decimal' | 'phone' | 'pin';
-    }
-    if (target instanceof HTMLTextAreaElement) return 'text';
-    if (!(target instanceof HTMLInputElement)) return 'text';
-
-    const type = String(target.type || '').toLowerCase();
-    const inputMode = String(target.inputMode || target.getAttribute('inputmode') || '').toLowerCase();
-    const idNameBlob = `${target.id || ''} ${target.name || ''} ${target.className || ''} ${target.placeholder || ''}`.toLowerCase();
-
-    if (target.id === 'customerMgmtQuery') return 'text';
-
-    if (type === 'number') return 'numeric';
-    if (inputMode === 'tel' || type === 'tel') return 'phone';
-    if (type === 'password' && /pin/.test(idNameBlob)) return 'pin';
-    if (/price|amount|tip|payment|currency|cash/.test(idNameBlob)) return 'decimal';
-    if (inputMode === 'decimal') return 'decimal';
-    if (inputMode === 'numeric') return 'numeric';
-    if (/zip|qty|quantity|count|line number|modifiercount/.test(idNameBlob)) return 'numeric';
+    const context = getKeyboardContextForTarget(target);
+    if (context === 'money') return 'decimal';
+    if (context === 'phone') return 'phone';
+    if (context === 'numeric') return 'numeric';
     return 'text';
   }
 
@@ -838,11 +935,12 @@ const keyboardController = (() => {
   }
 
   function refreshIntentChips() {
-    if (!activeInput || activeInputKind !== 'text') {
+    const target = resolveActiveKeyboardTarget();
+    if (!target || activeInputKind !== 'text') {
       activeIntentChips = [];
       return;
     }
-    const context = activeIntentContextForTarget(activeInput);
+    const context = activeIntentContextForTarget(target);
     activeIntentFieldType = context.fieldType;
     activeIntentChips = getIntentChips(context);
   }
@@ -948,17 +1046,11 @@ const keyboardController = (() => {
         { label: '9', value: '9' }
       ]
     ];
-    const bottomRow = kind === 'decimal'
-      ? [
-          { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-numeric-action' },
-          { label: '0', value: '0' },
-          { label: '.', value: '.', action: 'decimal' }
-        ]
-      : [
-          { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-numeric-action' },
-          { label: '0', value: '0' },
-          { label: '<<<', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-numeric-action' }
-        ];
+    const bottomRow = [
+      { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-numeric-action' },
+      { label: '0', value: '0' },
+      { label: 'Backspace', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-numeric-action' }
+    ];
 
     return `
       <div class="micro-keyboard-numeric-grid" aria-hidden="true">
@@ -966,7 +1058,7 @@ const keyboardController = (() => {
         ${keyboardRowHtml(bottomRow, 'micro-keyboard-numeric-row')}
         ${kind === 'decimal'
           ? keyboardRowHtml([
-              { label: '<<<', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-numeric-action micro-keyboard-numeric-backspace' }
+              { label: '.', value: '.', action: 'decimal', sizeClass: 'micro-keyboard-numeric-action micro-keyboard-numeric-backspace' }
             ], 'micro-keyboard-numeric-row micro-keyboard-numeric-row-1')
           : ''}
       </div>
@@ -1071,19 +1163,36 @@ const keyboardController = (() => {
     const nextStart = Math.max(0, start);
     const nextEnd = Math.max(nextStart, end);
     target.setSelectionRange(nextStart, nextEnd);
+    lastKnownSelection = { start: nextStart, end: nextEnd };
   }
 
   function normalizeSelection(target) {
     const value = String(target.value || '');
     const start = typeof target.selectionStart === 'number' ? target.selectionStart : value.length;
     const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+    lastKnownSelection = { start, end };
     return { value, start, end };
   }
 
+  function rememberSelectionForTarget(target) {
+    if (!target) return;
+    const value = String(target.value || '');
+    const start = typeof target.selectionStart === 'number' ? target.selectionStart : value.length;
+    const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+    lastKnownSelection = { start, end };
+  }
+
+  function restoreSelectionForTarget(target) {
+    if (!target || !lastKnownSelection) return;
+    setTargetSelection(target, lastKnownSelection.start, lastKnownSelection.end);
+  }
+
   function focusKeyboardTarget() {
-    if (!activeInput || !document.contains(activeInput)) return null;
-    activeInput.focus({ preventScroll: true });
-    return activeInput;
+    const target = resolveActiveKeyboardTarget();
+    if (!target || !document.contains(target)) return null;
+    target.focus({ preventScroll: true });
+    restoreSelectionForTarget(target);
+    return target;
   }
 
   function insertTextIntoKeyboardTarget(text) {
@@ -1193,6 +1302,18 @@ const keyboardController = (() => {
     applyIntentChipToTarget(chip);
   }
 
+  function stabilizeMicroKeyboardAfterEdit() {
+    if (mode !== 'micro' || !keyboardVisible) return;
+    const target = resolveActiveKeyboardTarget();
+    if (!target) {
+      hideKeyboard();
+      return;
+    }
+    showKeyboardForInput(target, { source: 'keyboard-edit' });
+    positionMicroKeyboard(target);
+    rememberSelectionForTarget(target);
+  }
+
   function handleMicroKeyboardAction(action, keyValue) {
     if (action === 'done') {
       hideKeyboard();
@@ -1204,18 +1325,21 @@ const keyboardController = (() => {
       backspaceKeyboardTarget();
       refreshIntentChips();
       refreshIntentRailDom();
+      stabilizeMicroKeyboardAfterEdit();
       return;
     }
     if (action === 'clear') {
       clearKeyboardTarget();
       refreshIntentChips();
       refreshIntentRailDom();
+      stabilizeMicroKeyboardAfterEdit();
       return;
     }
     if (action === 'space') {
       insertTextIntoKeyboardTarget(' ');
       refreshIntentChips();
       refreshIntentRailDom();
+      stabilizeMicroKeyboardAfterEdit();
       return;
     }
     if (action === 'decimal') {
@@ -1227,11 +1351,13 @@ const keyboardController = (() => {
       insertTextIntoKeyboardTarget('.');
       refreshIntentChips();
       refreshIntentRailDom();
+      stabilizeMicroKeyboardAfterEdit();
       return;
     }
     insertTextIntoKeyboardTarget(keyValue);
     refreshIntentChips();
     refreshIntentRailDom();
+    stabilizeMicroKeyboardAfterEdit();
   }
 
   function showKeyboardForInput(inputElement, _context = {}) {
@@ -1240,7 +1366,9 @@ const keyboardController = (() => {
       return;
     }
     disableNativeInputSuggestions(inputElement);
-    activeInput = inputElement;
+    activeKeyboardTarget = inputElement;
+    activeTargetLocator = buildTargetLocator(inputElement);
+    rememberSelectionForTarget(inputElement);
     activeInputKind = getKeyboardInputKind(inputElement);
     activeIntentFieldType = activeInputKind === 'text' ? intentFieldTypeForInput(inputElement) : 'generic-text';
     refreshIntentChips();
@@ -1250,6 +1378,7 @@ const keyboardController = (() => {
     }
 
     const root = ensureRoot();
+    keyboardVisible = true;
     root.className = `custom-keyboard-root mode-${mode}`;
     if (mode === 'micro') {
       root.innerHTML = activeInputKind === 'text'
@@ -1267,6 +1396,7 @@ const keyboardController = (() => {
 
   function hideKeyboard() {
     const root = ensureRoot();
+    keyboardVisible = false;
     root.className = `custom-keyboard-root is-hidden mode-${mode}`;
     root.innerHTML = '';
     activeInputKind = 'text';
@@ -1287,15 +1417,40 @@ const keyboardController = (() => {
       hideKeyboard();
       return;
     }
-    if (activeInput && document.contains(activeInput)) {
-      showKeyboardForInput(activeInput, { source: 'mode-change' });
+    const target = resolveActiveKeyboardTarget();
+    if (target && document.contains(target)) {
+      showKeyboardForInput(target, { source: 'mode-change' });
     } else {
       hideKeyboard();
     }
   }
 
   function getActiveInput() {
-    return activeInput;
+    return resolveActiveKeyboardTarget();
+  }
+
+  function syncKeyboardAfterRender() {
+    if (!keyboardVisible) return;
+    if (!shouldShowCustomKeyboard()) {
+      hideKeyboard();
+      return;
+    }
+    const target = resolveActiveKeyboardTarget();
+    if (!target) {
+      hideKeyboard();
+      return;
+    }
+    showKeyboardForInput(target, { source: 'render-sync' });
+  }
+
+  function shouldKeepKeyboardOpenOnFocusOut(nextElement) {
+    if (isElementInsideKeyboard(nextElement)) {
+      suppressFocusOutClose = false;
+      return true;
+    }
+    if (!suppressFocusOutClose) return false;
+    suppressFocusOutClose = false;
+    return true;
   }
 
   return {
@@ -1311,7 +1466,11 @@ const keyboardController = (() => {
     handleIntentChipSelection,
     refreshIntentChips,
     getActiveInputKind: () => activeInputKind,
-    getActiveIntentFieldType: () => activeIntentFieldType
+    getActiveIntentFieldType: () => activeIntentFieldType,
+    syncKeyboardAfterRender,
+    isElementInsideKeyboard,
+    markInternalPointerInteraction,
+    shouldKeepKeyboardOpenOnFocusOut
   };
 })();
 
@@ -1330,8 +1489,16 @@ function installKeyboardLifecycleEvents() {
   document.addEventListener('focusout', (event) => {
     const target = event.target as Element;
     if (!keyboardController.isSupportedInput(target)) return;
+    const nextFromEvent = event.relatedTarget as Element | null;
     window.setTimeout(() => {
       const nextActive = document.activeElement as Element | null;
+      if (keyboardController.shouldKeepKeyboardOpenOnFocusOut(nextFromEvent) || keyboardController.shouldKeepKeyboardOpenOnFocusOut(nextActive)) {
+        const active = keyboardController.getActiveInput();
+        if (active && document.contains(active)) {
+          keyboardController.showKeyboardForInput(active, { source: 'keyboard-internal-focus-shift' });
+          return;
+        }
+      }
       if (keyboardController.isSupportedInput(nextActive)) {
         keyboardController.showKeyboardForInput(nextActive as HTMLInputElement | HTMLTextAreaElement, { source: 'focus-shift' });
         return;
@@ -1357,10 +1524,20 @@ function installKeyboardLifecycleEvents() {
   document.addEventListener('pointerdown', (event) => {
     const el = event.target as Element;
     if (!el) return;
-    if (!el.closest('.kbd-key') && !el.closest('.micro-keyboard-intent-chip')) return;
+    if (!keyboardController.isElementInsideKeyboard(el)) return;
+    keyboardController.markInternalPointerInteraction();
     event.preventDefault();
     event.stopPropagation();
-  });
+  }, true);
+
+  document.addEventListener('mousedown', (event) => {
+    const el = event.target as Element;
+    if (!el) return;
+    if (!keyboardController.isElementInsideKeyboard(el)) return;
+    keyboardController.markInternalPointerInteraction();
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
 
   document.addEventListener('click', (event) => {
     const el = event.target as Element;
@@ -1779,15 +1956,6 @@ function getPayNowValidation() {
     if (!deliveryAddressText(customer)) issues.push({ key: 'address1', label: 'Address is required for Delivery.' });
   }
 
-  if (state.orderType === 'pickup') {
-    // For Pickup: require EITHER name OR phone, but not both; address not required
-    const hasName = String(customer.name || '').trim().length > 0;
-    const hasPhone = normalizePhone(customer.phone);
-    if (!hasName && !hasPhone) {
-      issues.push({ key: 'name_or_phone', label: 'Pickup requires either customer name or phone number.' });
-    }
-  }
-
   if (state.orderType === 'togo' || state.orderType === 'tostay' || state.orderType === 'dinein') {
     // To-Go, To-Stay, Dine-In: no customer fields required
   }
@@ -1954,6 +2122,9 @@ function resetTicketAfterPayment() {
     allergies: '',
     specialInstructions: ''
   };
+  state.focusCustomerEntryOnRender = false;
+  state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
+  state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
   resetOrderClassifiers();
 }
 
@@ -2013,6 +2184,9 @@ function resetForNewSale() {
     allergies: '',
     specialInstructions: ''
   };
+  state.focusCustomerEntryOnRender = false;
+  state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
+  state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
   resetOrderClassifiers();
 }
 
@@ -2520,11 +2694,68 @@ function setPhoneClassifier(selected: any, sourceHint?: any) {
   }
 }
 
-function applyOrderTypeRules(nextType) {
+function hasCallerIdLineContext() {
+  return state.selectedLineNumber != null || !!state.call;
+}
+
+function hasCustomerContext() {
+  return !!(
+    state.activeCustomer
+    || String(state.customerDraft?.name || '').trim()
+    || normalizePhone(state.customerDraft?.phone || '')
+  );
+}
+
+function hasCallerOrCustomerContext() {
+  return hasCallerIdLineContext() || hasCustomerContext();
+}
+
+function openOrFocusAddCustomerForm() {
+  state.customerPanelMode = 'entry';
+  state.customerEditorMode = 'new';
+  state.focusCustomerEntryOnRender = true;
+}
+
+function closeOrderTypeDraftDialog() {
+  state.orderTypeDraftDialog = {
+    open: false,
+    type: null,
+    name: '',
+    phone: '',
+    tableNumber: ''
+  };
+}
+
+function openOrderTypeDraftDialog(type: 'togo' | 'dinein') {
+  const seed = type === 'togo'
+    ? {
+        name: state.orderTypeDetails.togoName || '',
+        phone: phoneDisplayValue(state.orderTypeDetails.togoPhone || '')
+      }
+    : {
+        tableNumber: state.orderTypeDetails.dineInTableNumber || ''
+      };
+
+  state.orderTypeDraftDialog = {
+    open: true,
+    type,
+    name: seed.name || '',
+    phone: seed.phone || '',
+    tableNumber: seed.tableNumber || ''
+  };
+}
+
+function commitOrderType(nextType) {
   state.orderType = nextType;
-  if (nextType === 'pickup' || nextType === 'delivery') {
-    setPhoneClassifier(true, 'phone');
+
+  if (nextType !== 'togo') {
+    state.orderTypeDetails.togoName = '';
+    state.orderTypeDetails.togoPhone = '';
   }
+  if (nextType !== 'dinein') {
+    state.orderTypeDetails.dineInTableNumber = '';
+  }
+
   if (nextType === 'togo' || nextType === 'tostay' || nextType === 'dinein') {
     setPhoneClassifier(false);
     state.orderSource = 'counter';
@@ -2532,10 +2763,61 @@ function applyOrderTypeRules(nextType) {
     return;
   }
 
+  if (hasCallerIdLineContext()) {
+    setPhoneClassifier(true, 'callerId');
+  } else {
+    setPhoneClassifier(false, 'counter');
+  }
+
   if (nextType === 'delivery' && !hasDeliveryProfile(currentCustomerLike())) {
     state.deliveryInfoMissing = true;
-    openDeliveryProfileDialog();
+    openOrFocusAddCustomerForm();
+    return;
   }
+
+  state.deliveryInfoMissing = false;
+}
+
+function handleOrderTypeSelection(nextType) {
+  if (!nextType) return;
+
+  if (nextType === 'togo') {
+    openOrderTypeDraftDialog('togo');
+    return;
+  }
+
+  if (nextType === 'dinein') {
+    openOrderTypeDraftDialog('dinein');
+    return;
+  }
+
+  closeOrderTypeDraftDialog();
+  commitOrderType(nextType);
+
+  if ((nextType === 'pickup' || nextType === 'delivery') && !hasCallerOrCustomerContext()) {
+    openOrFocusAddCustomerForm();
+  }
+}
+
+function cancelOrderTypeDraftDialog() {
+  closeOrderTypeDraftDialog();
+}
+
+function startTogoFromDraftDialog() {
+  const draft = state.orderTypeDraftDialog;
+  const nextName = String(draft.name || '').trim();
+  const nextPhone = normalizePhone(draft.phone || '');
+  state.orderTypeDetails.togoName = nextName;
+  state.orderTypeDetails.togoPhone = nextPhone;
+  closeOrderTypeDraftDialog();
+  commitOrderType('togo');
+}
+
+function startDineInFromDraftDialog() {
+  const draft = state.orderTypeDraftDialog;
+  state.orderTypeDetails.dineInTableNumber = String(draft.tableNumber || '').trim();
+  closeOrderTypeDraftDialog();
+  commitOrderType('dinein');
 }
 
 function openScheduleDialog() {
@@ -3359,6 +3641,8 @@ async function clearAll() {
   await dbClear();
   Object.assign(state, { menu: null, metrics: {}, cart: [], selected: null, idx: null, category: VIEW_ALL_ITEMS, favoriteCategoryIds: [], sentOrdersToday: [], orderSpecialInstructions: '' });
   state.removeConfirmLineId = null;
+  state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
+  state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
   resetOrderClassifiers();
   render();
 }
@@ -3367,6 +3651,8 @@ function clearTicket() {
   state.cart = [];
   state.removeConfirmLineId = null;
   state.orderSpecialInstructions = '';
+  state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
+  state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
   render();
 }
 
@@ -3410,12 +3696,66 @@ function resetOrderClassifiers() {
   state.futureDateTime = null;
   state.futureOrderNote = '';
   state.thirdClassifierSelected = false;
+  state.deliveryInfoMissing = false;
+  state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
   closeScheduleDialog();
   closeAsapAdjustDialog();
 }
 
-function filteredOrderManagementRows() {
-  const q = String(state.ordersQuery || '').trim().toLowerCase();
+function parseOrderFutureTimestamp(order) {
+  if (!order?.futureDateTime) return null;
+  const parsed = new Date(order.futureDateTime);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.getTime();
+}
+
+function isQueuedFutureOrder(order, nowTs = Date.now()) {
+  if (!order) return false;
+  if (order.status === 'completed' || order.status === 'canceled') return false;
+  const futureTs = parseOrderFutureTimestamp(order);
+  if (futureTs == null) return false;
+  const timingType = String(order.timingType || '').toLowerCase();
+  return timingType === 'future' && futureTs > nowTs;
+}
+
+function orderQueueFilterMatch(order, queueFilter, nowTs = Date.now()) {
+  const isFuture = isQueuedFutureOrder(order, nowTs);
+  if (queueFilter === ORDER_MGMT_FILTERS.future) return isFuture;
+  if (queueFilter === ORDER_MGMT_FILTERS.open) return order.status === 'open' && !isFuture;
+  if (queueFilter === ORDER_MGMT_FILTERS.completed) return order.status === 'completed';
+  if (queueFilter === ORDER_MGMT_FILTERS.online) return !!order.onlineOnly && !isFuture;
+  return true;
+}
+
+function dedupeOrderRows(rows) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = String(row?.id || '');
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function queueCountForFilter(queueFilter) {
+  return filteredOrderManagementRows({ queueFilter, applyQuery: false }).length;
+}
+
+function orderQueueChips() {
+  return [
+    { id: ORDER_MGMT_FILTERS.open, label: 'Open' },
+    { id: ORDER_MGMT_FILTERS.completed, label: 'Completed' },
+    { id: ORDER_MGMT_FILTERS.online, label: 'Online Only' },
+    { id: ORDER_MGMT_FILTERS.future, label: 'Future Orders' }
+  ];
+}
+
+function filteredOrderManagementRows(options: any = {}) {
+  const queueFilter = options.queueFilter || state.ordersFilter;
+  const applyQuery = options.applyQuery !== false;
+  const q = applyQuery ? String(state.ordersQuery || '').trim().toLowerCase() : '';
+  const nowTs = Date.now();
   const persistedRows = OrderPersistence.getPersistedOrders().map((order) => ({
     id: order.id,
     number: order.orderNumber,
@@ -3424,7 +3764,12 @@ function filteredOrderManagementRows() {
     status: OrderPersistence.normalizeOrderStatus(order),
     source: order.orderSource,
     onlineOnly: String(order.orderSource || '').toLowerCase() === 'online',
-    timeLabel: new Date(order.createdTimestamp).toLocaleTimeString(),
+    timeLabel: order.timingType === 'future' && order.futureDateTime
+      ? `Future: ${formatFutureLabel(order.futureDateTime)}`
+      : new Date(order.createdTimestamp).toLocaleTimeString(),
+    createdTimestamp: order.createdTimestamp,
+    timingType: order.timingType || 'asap',
+    futureDateTime: order.futureDateTime || null,
     total: Number(order.total || 0),
     paymentStatus: order.paymentStatus,
     paid: !!order.paid,
@@ -3436,19 +3781,37 @@ function filteredOrderManagementRows() {
     status: OrderPersistence.normalizeOrderStatus(order),
     paymentStatus: order.paymentStatus || (order.status === 'completed' ? 'paid' : 'unpaid'),
     paid: typeof order.paid === 'boolean' ? order.paid : order.status === 'completed',
+    timeLabel: order.timingType === 'future' && order.futureDateTime
+      ? `Future: ${formatFutureLabel(order.futureDateTime)}`
+      : order.timeLabel,
+    timingType: order.timingType || 'asap',
+    futureDateTime: order.futureDateTime || null,
     isPersisted: false
   }));
 
-  const allOrders = [...persistedRows, ...legacyRows];
-  
-  return allOrders.filter((order) => {
-    if (state.ordersFilter === ORDER_MGMT_FILTERS.open && order.status !== 'open') return false;
-    if (state.ordersFilter === ORDER_MGMT_FILTERS.completed && order.status !== 'completed') return false;
-    if (state.ordersFilter === ORDER_MGMT_FILTERS.online && !order.onlineOnly) return false;
+  const allOrders = dedupeOrderRows([...persistedRows, ...legacyRows]);
+
+  const filtered = allOrders.filter((order) => {
+    if (!orderQueueFilterMatch(order, queueFilter, nowTs)) return false;
     if (!q) return true;
     const blob = `${order.number} ${order.customerName} ${ORDER_TYPES[order.orderType] || order.orderType} ${order.status} ${order.source}`.toLowerCase();
     return blob.includes(q);
   });
+
+  if (queueFilter === ORDER_MGMT_FILTERS.future) {
+    filtered.sort((a, b) => {
+      const aFuture = parseOrderFutureTimestamp(a);
+      const bFuture = parseOrderFutureTimestamp(b);
+      const aTs = aFuture == null ? Number.POSITIVE_INFINITY : aFuture;
+      const bTs = bFuture == null ? Number.POSITIVE_INFINITY : bFuture;
+      if (aTs !== bTs) return aTs - bTs;
+      const aCreated = new Date(a.createdTimestamp || 0).getTime();
+      const bCreated = new Date(b.createdTimestamp || 0).getTime();
+      return aCreated - bCreated;
+    });
+  }
+
+  return filtered;
 }
 
 function selectedOrderForDetail() {
@@ -4179,19 +4542,19 @@ function categoryTilesHtml() {
   const cats = visibleCategories();
   return `
     <div class="category-tile-grid">
-      ${cats.map((c) => categoryTileButtonHtml(c, 'Open category')).join('')}
+      ${cats.map((c) => categoryTileButtonHtml(c)).join('')}
     </div>
   `;
 }
 
-function categoryTileButtonHtml(category, metaText = 'Open category') {
+function categoryTileButtonHtml(category, metaText = '') {
   const hasImage = !!category?.imageUrl;
   return `
     <button class="category-tile ${hasImage ? 'has-image' : 'no-image'}" data-open-category="${category.id}" data-cat-edit="${category.id}">
       <div class="category-tile-main">
         <div class="category-tile-text">
           <b>${h(category.name)}</b>
-          <small>${h(metaText)}</small>
+          ${metaText ? `<small>${h(metaText)}</small>` : ''}
         </div>
         ${hasImage ? `<div class="category-tile-image"><img src="${h(category.imageUrl)}" alt="${h(category.name)}" loading="lazy" decoding="async" /></div>` : ''}
       </div>
@@ -4287,6 +4650,11 @@ function ticketPayload(kind: any): any {
     futureOrderNote,
     orderSpecialInstructions: state.orderSpecialInstructions,
     printTimingNote: timingType === 'future' ? `FUTURE ORDER\nReady/Requested: ${futureLabel}` : `Ready/Requested: ${asapTimingLabel}`,
+    orderTypeDetails: {
+      togoName: state.orderTypeDetails.togoName || '',
+      togoPhone: normalizePhone(state.orderTypeDetails.togoPhone || ''),
+      dineInTableNumber: state.orderTypeDetails.dineInTableNumber || ''
+    },
     customer: {
       id: state.activeCustomer?.id || null,
       name: state.activeCustomer?.name || state.customerDraft.name || state.customerName,
@@ -4338,15 +4706,55 @@ function sendOrderAction(paymentMode) {
   completePayLaterOrder();
 }
 
-function compactCustomerSummaryHtml() {
-  if (!state.activeCustomer) {
-    return `<div class="customer-summary empty-summary"><b>No customer selected</b><small>Tap a ringing line to load caller details.</small></div>`;
+function activeOrderTypeDetailRowsHtml() {
+  const orderType = String(state.orderType || '').toLowerCase();
+  const togoName = String(state.orderTypeDetails?.togoName || state.customerDraft?.name || '').trim();
+  const togoPhone = normalizePhone(state.orderTypeDetails?.togoPhone || state.customerDraft?.phone || '');
+  const dineInTable = String(state.orderTypeDetails?.dineInTableNumber || '').trim();
+
+  if (orderType === 'togo' || orderType === 'tostay') {
+    if (!togoName && !togoPhone) return '';
+    return `
+      ${togoName ? `<small><b>Guest Name:</b> ${h(togoName)}</small>` : ''}
+      ${togoPhone ? `<small><b>Guest Phone:</b> ${h(phoneDisplayValue(togoPhone))}</small>` : ''}
+    `;
   }
+
+  if (orderType === 'dinein') {
+    if (!dineInTable) return '';
+    return `<small><b>Table:</b> ${h(dineInTable)}</small>`;
+  }
+
+  return '';
+}
+
+function compactCustomerSummaryHtml() {
+  const orderTypeDetailsHtml = activeOrderTypeDetailRowsHtml();
+
+  if (!state.activeCustomer) {
+    if (orderTypeDetailsHtml) {
+      return `
+        <div class="customer-summary empty-summary">
+          ${orderTypeDetailsHtml}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="customer-summary empty-summary">
+        <b>No customer selected</b>
+        <small>Tap a ringing line to load caller details.</small>
+        ${orderTypeDetailsHtml}
+      </div>
+    `;
+  }
+
   const c = state.activeCustomer;
   return `
     <div class="customer-summary customer-summary-populated">
       <div class="sum-top"><b>${h(c.name)}</b><span>${h(phoneDisplayValue(c.phone))}</span></div>
       ${customerAddressText(c) ? `<small>${h(customerAddressText(c))}</small>` : ''}
+      ${orderTypeDetailsHtml}
       <div class="sum-tags">
         ${c.allergies ? `<span class="tag warn">Allergy: ${h(c.allergies)}</span>` : ''}
         ${c.specialInstructions ? `<span class="tag">${h(c.specialInstructions)}</span>` : ''}
@@ -4400,9 +4808,18 @@ function changeQty(id, delta) {
   render();
 }
 
+function dismissKeyboardBeforeModalOpen() {
+  keyboardController.hideKeyboard();
+  const active = document.activeElement as HTMLElement | null;
+  if (active && typeof active.blur === 'function') {
+    active.blur();
+  }
+}
+
 function openItem(id) {
   const item = lilposDataService.getItemById(id);
   if (!item || isItemOutOfStock(item)) return;
+  dismissKeyboardBeforeModalOpen();
   state.selected = item;
   const preModifiers = {};
   const groups = (state.idx?.itemMods?.get(item.id) || []).map((gid) => state.idx?.groupsById?.[gid]).filter(Boolean);
@@ -4592,6 +5009,8 @@ function openLineItemEditor(lineId) {
   if (!line) return;
   const item = lilposDataService.getItemById(line.itemId);
   if (!item || isItemOutOfStock(item)) return;
+
+  dismissKeyboardBeforeModalOpen();
 
   const preModifiers = {};
   const groups = (state.idx?.itemMods?.get(item.id) || []).map((gid) => state.idx?.groupsById?.[gid]).filter(Boolean);
@@ -5014,6 +5433,7 @@ function renderOrderTile(order) {
 
 function renderOrdersManagementView() {
   const rows = filteredOrderManagementRows();
+  const chips = orderQueueChips();
   return `
     <section class="menu-board center-view orders-mgmt-view">
       <div class="view-head">
@@ -5026,9 +5446,12 @@ function renderOrdersManagementView() {
         </div>
       </div>
       <div class="orders-filter-row">
-        <button class="pill ${state.ordersFilter === ORDER_MGMT_FILTERS.open ? 'active' : ''}" data-orders-filter="open">Open</button>
-        <button class="pill ${state.ordersFilter === ORDER_MGMT_FILTERS.completed ? 'active' : ''}" data-orders-filter="completed">Completed</button>
-        <button class="pill ${state.ordersFilter === ORDER_MGMT_FILTERS.online ? 'active' : ''}" data-orders-filter="online">Online Only</button>
+        ${chips.map((chip) => `
+          <button class="pill orders-filter-pill ${state.ordersFilter === chip.id ? 'active' : ''}" data-orders-filter="${chip.id}">
+            <span class="orders-filter-pill-label">${chip.label}</span>
+            <span class="orders-filter-pill-count">(${queueCountForFilter(chip.id)})</span>
+          </button>
+        `).join('')}
       </div>
       <div class="orders-mgmt-grid">
         ${rows.length ? rows.map((order) => renderOrderTile(order)).join('') : '<p class="muted">No matching orders for this filter.</p>'}
@@ -5592,6 +6015,35 @@ function orderNumberDialogHtml() {
   `;
 }
 
+function orderTypeDraftDialogHtml() {
+  const draft = state.orderTypeDraftDialog;
+  if (!draft.open || !draft.type) return '';
+  const isTogo = draft.type === 'togo';
+
+  return `
+    <div class="modal-backdrop">
+      <div class="call-modal manager-modal">
+        <h3>${isTogo ? 'Start To-Go Order' : 'Start Dine-In Order'}</h3>
+        <p>${isTogo ? 'Name and phone are optional for To-Go.' : 'Table number is optional for Dine-In.'}</p>
+        ${isTogo ? `
+          <div class="entry-grid">
+            <input id="togoDraftName" data-keyboard-context="customer-profile-name" placeholder="Optional name" value="${h(draft.name || '')}" />
+            <input id="togoDraftPhone" type="tel" inputmode="tel" autocomplete="tel" data-keyboard-kind="phone" data-keyboard-context="customer-profile-phone" placeholder="Optional phone" value="${h(draft.phone || '')}" />
+          </div>
+        ` : `
+          <div class="entry-grid">
+            <input id="dineinDraftTable" inputmode="numeric" data-keyboard-kind="numeric" data-keyboard-context="numeric" placeholder="Optional table number" value="${h(draft.tableNumber || '')}" />
+          </div>
+        `}
+        <div class="call-modal-actions">
+          <button id="startOrderTypeDraftBtn" class="btn-success">Start Order</button>
+          <button id="cancelOrderTypeDraftBtn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function asapAdjustDialogHtml() {
   if (!state.asapAdjustDialog.open) return '';
   return `
@@ -6117,6 +6569,7 @@ function render() {
       ${paymentDialogHtml()}
       ${newSaleConfirmDialogHtml()}
       ${orderNumberDialogHtml()}
+      ${orderTypeDraftDialogHtml()}
       ${cartItemEditorHtml()}
       ${itemQuickEditDialogHtml()}
       ${categoryQuickEditDialogHtml()}
@@ -6125,6 +6578,7 @@ function render() {
   `;
   applyBrowserInputSuggestionGuards();
   attachEvents();
+  keyboardController.syncKeyboardAfterRender();
 
   if (state.searchRefocus) {
     const cursorPos = state.searchCursorPos;
@@ -6135,6 +6589,17 @@ function render() {
       input.focus();
       const safePos = Math.max(0, Math.min(cursorPos, input.value.length));
       input.setSelectionRange(safePos, safePos);
+    });
+  }
+
+  if (state.focusCustomerEntryOnRender) {
+    state.focusCustomerEntryOnRender = false;
+    requestAnimationFrame(() => {
+      const input = (document.querySelector('#entryName') || document.querySelector('#customerMgmtName')) as HTMLInputElement | null;
+      if (!input) return;
+      input.focus();
+      const end = input.value.length;
+      if (typeof input.setSelectionRange === 'function') input.setSelectionRange(end, end);
     });
   }
 
@@ -6530,9 +6995,31 @@ function attachEvents() {
 
   document.querySelectorAll('[data-order-type]').forEach((b) => {
     b.addEventListener('click', () => {
-      applyOrderTypeRules(b.dataset.orderType);
+      handleOrderTypeSelection(b.dataset.orderType);
       render();
     });
+  });
+
+  $('#togoDraftName')?.addEventListener('input', (e) => {
+    state.orderTypeDraftDialog.name = e.target.value;
+  });
+  $('#togoDraftPhone')?.addEventListener('input', (e) => {
+    state.orderTypeDraftDialog.phone = syncPhoneInputMask(e.target as HTMLInputElement);
+  });
+  $('#dineinDraftTable')?.addEventListener('input', (e) => {
+    state.orderTypeDraftDialog.tableNumber = String(e.target.value || '').replace(/[^0-9]/g, '').slice(0, 6);
+  });
+  $('#startOrderTypeDraftBtn')?.addEventListener('click', () => {
+    if (state.orderTypeDraftDialog.type === 'togo') {
+      startTogoFromDraftDialog();
+    } else if (state.orderTypeDraftDialog.type === 'dinein') {
+      startDineInFromDraftDialog();
+    }
+    render();
+  });
+  $('#cancelOrderTypeDraftBtn')?.addEventListener('click', () => {
+    cancelOrderTypeDraftDialog();
+    render();
   });
 
   $('#editCustomer')?.addEventListener('click', openCustomerEditor);
@@ -6773,10 +7260,6 @@ function attachEvents() {
       alert('Delivery requires customer name, phone, and address.');
       return;
     }
-    if (state.orderType === 'pickup' && !hasName && !hasPhone) {
-      alert('Pickup requires either customer name or phone number.');
-      return;
-    }
 
     if (state.timingType === 'future') {
       const when = parseLocalDateTime(d.futureDate, d.futureTime);
@@ -6867,10 +7350,6 @@ function attachEvents() {
 
     if (state.orderType === 'delivery' && (!hasName || !hasPhone || !hasAddress)) {
       alert('Delivery requires customer name, phone, and address.');
-      return;
-    }
-    if (state.orderType === 'pickup' && !hasName && !hasPhone) {
-      alert('Pickup requires either customer name or phone number.');
       return;
     }
 

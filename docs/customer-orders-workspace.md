@@ -4,10 +4,10 @@
 
 The center workspace area of LilPOS supports three modes:
 
-| Mode | Constant | Renders |
-|---|---|---|
-| Menu | `MAIN_VIEWS.menu` | Menu board + category rail |
-| Orders | `MAIN_VIEWS.orders` | Orders management list |
+| Mode      | Constant               | Renders                         |
+| --------- | ---------------------- | ------------------------------- |
+| Menu      | `MAIN_VIEWS.menu`      | Menu board + category rail      |
+| Orders    | `MAIN_VIEWS.orders`    | Orders management list          |
 | Customers | `MAIN_VIEWS.customers` | Customer management list + form |
 
 Active mode is tracked in `state.mainView`.
@@ -18,11 +18,11 @@ Active mode is tracked in `state.mainView`.
 
 The right pane header contains three icon buttons:
 
-| Button | ID | Action |
-|---|---|---|
-| Orders | `ordersViewBtn` | Sets `state.mainView = MAIN_VIEWS.orders` |
-| Calendar (future order) | `calendarClassifier` | Opens future order schedule dialog |
-| Customer management | `customerMgmtBtn` | Sets `state.mainView = MAIN_VIEWS.customers` |
+| Button                  | ID                   | Action                                       |
+| ----------------------- | -------------------- | -------------------------------------------- |
+| Orders                  | `ordersViewBtn`      | Sets `state.mainView = MAIN_VIEWS.orders`    |
+| Calendar (future order) | `calendarClassifier` | Opens future order schedule dialog           |
+| Customer management     | `customerMgmtBtn`    | Sets `state.mainView = MAIN_VIEWS.customers` |
 
 Switching to Orders or Customers changes the center area only. The right ticket pane persists.
 
@@ -34,13 +34,14 @@ Rendered by `renderOrdersManagementView()`.
 
 ### Filters
 
-Three filter tabs:
+Four filter tabs:
 
-| Filter | Shows |
-|---|---|
-| Open | Orders with `status === 'open'` |
-| Completed | Orders with `status === 'completed'` |
-| Online Only | Orders with `onlineOnly === true` |
+| Filter        | Shows                                                                                    |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| Open          | Orders with `status === 'open'`                                                          |
+| Completed     | Orders with `status === 'completed'`                                                     |
+| Online Only   | Orders with `onlineOnly === true`                                                        |
+| Future Orders | Scheduled orders with `timingType === 'future'` and `futureDateTime` still in the future |
 
 Active filter is tracked in `state.ordersFilter`.
 
@@ -99,11 +100,11 @@ The form in the right column uses the same fields as the ticket pane customer ed
 
 Three action buttons:
 
-| Button | ID | Action |
-|---|---|---|
-| Save Customer | `customerMgmtApply` | Saves draft without starting a ticket |
-| Cancel | `customerMgmtCancel` | Clears the draft form |
-| Start Ticket | `customerMgmtStartTicket` | Saves customer and loads them into the active ticket |
+| Button        | ID                        | Action                                               |
+| ------------- | ------------------------- | ---------------------------------------------------- |
+| Save Customer | `customerMgmtApply`       | Saves draft without starting a ticket                |
+| Cancel        | `customerMgmtCancel`      | Clears the draft form                                |
+| Start Ticket  | `customerMgmtStartTicket` | Saves customer and loads them into the active ticket |
 
 ---
 
@@ -113,10 +114,10 @@ The right ticket pane always shows a customer section (`.customer-shell`) regard
 
 Two modes for the customer section:
 
-| Mode | Class | Shows |
-|---|---|---|
+| Mode      | Class         | Shows                                                             |
+| --------- | ------------- | ----------------------------------------------------------------- |
 | `compact` | `.is-compact` | Customer summary (name, phone, address, allergy/instruction tags) |
-| `entry` | `.is-entry` | Full customer edit form |
+| `entry`   | `.is-entry`   | Full customer edit form                                           |
 
 ### Compact Mode
 
@@ -138,11 +139,11 @@ Form fields:
 
 Action buttons (`.customer-entry-actions`):
 
-| Button | ID | Action |
-|---|---|---|
-| Save Customer | `saveCustomer` | Calls `saveDraftCustomer(false)` |
-| Cancel | `cancelCustomer` | Closes entry form, returns to compact |
-| Start Ticket | `startTicketCustomer` | Calls `saveDraftCustomer(true)` |
+| Button        | ID                    | Action                                |
+| ------------- | --------------------- | ------------------------------------- |
+| Save Customer | `saveCustomer`        | Calls `saveDraftCustomer(false)`      |
+| Cancel        | `cancelCustomer`      | Closes entry form, returns to compact |
+| Start Ticket  | `startTicketCustomer` | Calls `saveDraftCustomer(true)`       |
 
 ### Layout Rules
 
