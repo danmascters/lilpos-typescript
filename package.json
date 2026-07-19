@@ -13,10 +13,11 @@
     "cf:deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
     "vite": "^8.1.5",
     "vitest": "^3.2.4",
-    "jsdom": "^26.1.0",
     "wrangler": "^4.107.1"
   }
 }

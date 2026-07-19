@@ -1,7 +1,3 @@
-const DB_NAME = 'BringdatSmartRegisterMockNoNpm';
-const DB_VERSION = 1;
-const STORE = 'kv';
-
 let deferredInstallPrompt = null;
 const lineResetTimers = new Map();
 const VIEW_ALL_CATEGORIES = 'all_categories';
@@ -103,132 +99,14 @@ const ORDER_SPECIAL_INSTRUCTION_CHIPS = [
 
 const DEFAULT_KEYBOARD_MODE: KeyboardMode = 'micro';
 
-// Order Persistence Module
-const OrderPersistence = (() => {
-  const STORE_KEY = 'lilpos_persisted_orders';
-  const DATE_KEY = 'lilpos_business_date';
-
-  function getBusinessDate() {
-    const stored = localStorage.getItem(DATE_KEY);
-    const today = new Date().toISOString().split('T')[0];
-    if (stored === today) return today;
-    localStorage.setItem(DATE_KEY, today);
-    return today;
+function normalizeOrderStatus(order) {
+  const rawStatus = String(order?.status || '').trim().toLowerCase();
+  if (rawStatus === 'completed' || rawStatus === 'open' || rawStatus === 'canceled' || rawStatus === 'closed') {
+    return rawStatus;
   }
-
-  function getStationNumber() {
-    return STATION_NUMBER;
-  }
-
-  function normalizeOrderStatus(order) {
-    const rawStatus = String(order?.status || '').trim().toLowerCase();
-    if (rawStatus === 'completed' || rawStatus === 'open' || rawStatus === 'canceled') return rawStatus;
-    const paid = !!order?.paid || String(order?.paymentStatus || '').toLowerCase() === 'paid';
-    return paid ? 'completed' : 'open';
-  }
-
-  function parseDailySequence(orderNumber, stationNumber) {
-    const expectedPrefix = `${stationNumber}-`;
-    const raw = String(orderNumber || '');
-    if (!raw.startsWith(expectedPrefix)) return null;
-    const suffix = raw.slice(expectedPrefix.length);
-    const parsed = Number(suffix);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  function getNextDailyOrderSequence() {
-    const businessDate = getBusinessDate();
-    const stationNumber = getStationNumber();
-    const orders = getPersistedOrders();
-    const todayOrders = orders.filter((o) => o.businessDate === businessDate && Number(o.stationNumber) === Number(stationNumber));
-    const maxSequence = todayOrders.reduce((best, order) => {
-      const current = parseDailySequence(order.orderNumber, stationNumber);
-      return current == null ? best : Math.max(best, current);
-    }, -1);
-    return maxSequence + 1;
-  }
-
-  function buildOrderNumber() {
-    const station = getStationNumber();
-    const sequence = getNextDailyOrderSequence();
-    const paddedSequence = String(sequence).padStart(5, '0');
-    return `${station}-${paddedSequence}`;
-  }
-
-  function getPersistedOrders() {
-    try {
-      const data = localStorage.getItem(STORE_KEY);
-      const parsed = data ? JSON.parse(data) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (err) {
-      console.error('Failed to read persisted orders:', err);
-      return [];
-    }
-  }
-
-  function getPersistedOrderById(orderId) {
-    if (!orderId) return null;
-    const order = getPersistedOrders().find((entry) => entry.id === orderId) || null;
-    if (!order) return null;
-    const customerSnapshot = order.customerSnapshot || order.customerInfo || order.customer || null;
-    return {
-      ...order,
-      customer: customerSnapshot ? { ...customerSnapshot } : null,
-      customerSnapshot: customerSnapshot ? { ...customerSnapshot } : null,
-      customerInfo: customerSnapshot ? { ...customerSnapshot } : null
-    };
-  }
-
-  function persistOrder(order) {
-    try {
-      const orders = getPersistedOrders();
-      const customerSnapshot = order?.customerSnapshot || order?.customerInfo || order?.customer || null;
-      const normalizedOrder = {
-        ...order,
-        status: normalizeOrderStatus(order),
-        paid: typeof order?.paid === 'boolean' ? order.paid : String(order?.paymentStatus || '').toLowerCase() === 'paid',
-        updatedTimestamp: order?.updatedTimestamp || nowIso(),
-        customer: customerSnapshot ? { ...customerSnapshot } : null,
-        customerSnapshot: customerSnapshot ? { ...customerSnapshot } : null,
-        customerInfo: customerSnapshot ? { ...customerSnapshot } : null
-      };
-      orders.unshift(normalizedOrder);
-      localStorage.setItem(STORE_KEY, JSON.stringify(orders));
-      return true;
-    } catch (err) {
-      console.error('Failed to persist order:', err);
-      return false;
-    }
-  }
-
-  function updatePersistedOrderStatus(orderId, status) {
-    try {
-      const orders = getPersistedOrders();
-      const order = orders.find((o) => o.id === orderId);
-      if (order) {
-        order.status = normalizeOrderStatus({ status });
-        order.updatedTimestamp = nowIso();
-        localStorage.setItem(STORE_KEY, JSON.stringify(orders));
-      }
-      return !!order;
-    } catch (err) {
-      console.error('Failed to update persisted order status:', err);
-      return false;
-    }
-  }
-
-  return {
-    getBusinessDate,
-    getStationNumber,
-    getNextDailyOrderSequence,
-    buildOrderNumber,
-    getPersistedOrders,
-    getPersistedOrderById,
-    persistOrder,
-    updatePersistedOrderStatus,
-    normalizeOrderStatus
-  };
-})();
+  const paid = !!order?.paid || String(order?.paymentStatus || '').toLowerCase() === 'paid';
+  return paid ? 'completed' : 'open';
+}
 
 function isStandaloneMode() {
   return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
@@ -249,6 +127,10 @@ const state: any = {
   ordersQuery: '',
   customersQuery: '',
   selectedOrderId: null,
+  previousOrderAuditExpanded: false,
+  persistedOrdersCache: [],
+  persistedOrderDetailCacheById: {},
+  nextDisplayOrderNumber: `${STATION_NUMBER}-00000`,
   category: VIEW_ALL_ITEMS,
   preSearchCategory: null,
   selected: null,
@@ -657,7 +539,7 @@ function localCustomerSearchCandidates() {
   (state.mockOrders || []).forEach((order, index) => {
     addCustomerSearchEntries(order?.customerInfo || { name: order?.customerName || '' }, index, 'recent', 90);
   });
-  (OrderPersistence.getPersistedOrders() || []).slice(0, 24).forEach((order, index) => {
+  persistedOrders().slice(0, 24).forEach((order, index) => {
     const customer = order?.customerSnapshot || order?.customerInfo || order?.customer || null;
     addCustomerSearchEntries(customer, index, 'recent', 100);
   });
@@ -1999,10 +1881,10 @@ function openOrderNumberDialog(orderNumber, orderId) {
   state.orderNumberDialog.orderId = orderId || null;
 }
 
-function printOrderNumberReceipt(kind) {
-  const order = OrderPersistence.getPersistedOrderById(state.orderNumberDialog.orderId);
+async function printOrderNumberReceipt(kind) {
+  const order = await hydratePersistedOrderDetail(state.orderNumberDialog.orderId);
   if (!order) {
-    alert('Order data is no longer available in local storage.');
+    alert('Order data is no longer available in local history.');
     return;
   }
   const payload = {
@@ -2190,7 +2072,7 @@ function buildPaymentPaneInput() {
   const taxCents = Math.round(ticketTax() * 100);
   const totalCents = Math.round(ticketGrandTotal() * 100);
   return {
-    displayOrderNumber: OrderPersistence.buildOrderNumber(),
+    displayOrderNumber: state.nextDisplayOrderNumber || `${lilposDataService.getStationNumber()}-00000`,
     orderTypeLabel: paymentPaneOrderTypeLabel(state.orderType),
     stationName: `Main Station`,
     subtotalCents,
@@ -2467,7 +2349,7 @@ function requestNewSale(pendingLineNumber = null) {
   render();
 }
 
-function completePayNowOrder() {
+async function completePayNowOrder() {
   if (state.orderSendLocked) return;
   const totals = paymentTotals();
   if (state.paymentDialog.paymentLines.length === 0 || totals.remaining > 0) {
@@ -2478,7 +2360,7 @@ function completePayNowOrder() {
   state.orderSendLocked = true;
 
   const payload = ticketPayload('send-order');
-  const orderNumber = OrderPersistence.buildOrderNumber();
+  const orderNumber = await lilposDataService.buildOrderNumber();
   
   payload.paymentIntent = 'pay_now';
   payload.paymentActionLabel = 'Send & Pay Now';
@@ -2503,8 +2385,8 @@ function completePayNowOrder() {
     id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     orderNumber,
     localTicketId: payload.ticketId,
-    stationNumber: OrderPersistence.getStationNumber(),
-    businessDate: OrderPersistence.getBusinessDate(),
+    stationNumber: lilposDataService.getStationNumber(),
+    businessDate: lilposDataService.getBusinessDate(),
     createdTimestamp: nowIso(),
     updatedTimestamp: nowIso(),
     orderType: payload.orderType,
@@ -2516,6 +2398,14 @@ function completePayNowOrder() {
     status: 'completed',
     paymentStatus: 'paid',
     paid: true,
+    paymentMethodSummary: payload.paymentMethodSummary,
+    paymentLines: payload.paymentLines,
+    auditEvents: [
+      { event: 'Entered', timestamp: nowIso(), employeeShortName: 'System' },
+      { event: 'Sent', timestamp: nowIso(), employeeShortName: 'System' },
+      { event: 'Paid', timestamp: nowIso(), employeeShortName: 'System' },
+      { event: 'Closed', timestamp: nowIso(), employeeShortName: 'System' }
+    ],
     customer: payload.customer,
     customerSnapshot: payload.customer,
     customerInfo: payload.customer,
@@ -2528,8 +2418,71 @@ function completePayNowOrder() {
     payloadSnapshot: payload
   };
 
-  const persisted = OrderPersistence.persistOrder(persistedOrder);
-  if (!persisted) {
+  try {
+    const snapshot = await lilposDataService.saveOrderHistorySnapshot({
+      orderId: persistedOrder.id,
+      displayOrderNumber: persistedOrder.orderNumber,
+      stationId: persistedOrder.stationNumber,
+      businessDate: persistedOrder.businessDate,
+      orderType: persistedOrder.orderType,
+      orderStatus: persistedOrder.status,
+      paymentStatus: persistedOrder.paymentStatus,
+      storedDisplayName: persistedOrder.customer?.name || 'Guest',
+      storedPhone: persistedOrder.customer?.phone || '',
+      storedAddressSummary: persistedOrder.customer?.address1 || '',
+      subtotal: persistedOrder.subtotal,
+      tax: persistedOrder.tax,
+      total: persistedOrder.total,
+      amountPaid: totals.amountPaid,
+      remainingBalanceCents: 0,
+      openedAt: persistedOrder.createdTimestamp,
+      sentAt: persistedOrder.createdTimestamp,
+      completedAt: persistedOrder.updatedTimestamp,
+      closedAt: persistedOrder.updatedTimestamp,
+      createdAt: persistedOrder.createdTimestamp,
+      updatedAt: persistedOrder.updatedTimestamp,
+      sourceSnapshot: {
+        orderSpecialInstructions: persistedOrder.orderSpecialInstructions,
+        timingType: persistedOrder.timingType,
+        asapTime: persistedOrder.asapTime,
+        futureDateTime: persistedOrder.futureDateTime,
+        orderSource: persistedOrder.orderSource,
+        customer: persistedOrder.customer,
+        paymentMethodSummary: persistedOrder.paymentMethodSummary
+      }
+    });
+
+    await lilposDataService.saveOrderHistoryItems(snapshot.historyId, persistedOrder.id, persistedOrder.lines || []);
+
+    for (const auditEvent of persistedOrder.auditEvents || []) {
+      await lilposDataService.appendOrderEvent({
+        orderId: persistedOrder.id,
+        historyId: snapshot.historyId,
+        businessDate: persistedOrder.businessDate,
+        label: auditEvent.event,
+        eventTimestamp: auditEvent.timestamp,
+        employeeShortName: auditEvent.employeeShortName || 'System'
+      });
+    }
+
+    for (const line of persistedOrder.paymentLines || []) {
+      await lilposDataService.savePaymentHistory({
+        orderId: persistedOrder.id,
+        historyId: snapshot.historyId,
+        paymentType: line.paymentType,
+        amount: Number(line.amount || 0) + Number(line.tipAmount || 0),
+        paidAt: persistedOrder.updatedTimestamp,
+        employeeShortName: 'System'
+      });
+    }
+
+    await refreshPersistedOrdersCache({ refreshNextOrderNumber: true, renderAfter: false });
+    state.persistedOrderDetailCacheById[persistedOrder.id] = {
+      ...persistedOrder,
+      status: normalizeOrderStatus(persistedOrder)
+    };
+  } catch (err) {
+    console.error('Unable to persist order history record:', err);
     state.orderSendLocked = false;
     alert('Unable to persist this order locally. Ticket has not been reset.');
     return;
@@ -2556,11 +2509,11 @@ function completePayNowOrder() {
   render();
 }
 
-function completePayLaterOrder() {
+async function completePayLaterOrder() {
   if (state.orderSendLocked) return;
   state.orderSendLocked = true;
   const payload = ticketPayload('send-order');
-  const orderNumber = OrderPersistence.buildOrderNumber();
+  const orderNumber = await lilposDataService.buildOrderNumber();
   
   payload.paymentIntent = 'pay_later';
   payload.paymentActionLabel = 'Send & Pay Later';
@@ -2576,8 +2529,8 @@ function completePayLaterOrder() {
     id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     orderNumber,
     localTicketId: payload.ticketId,
-    stationNumber: OrderPersistence.getStationNumber(),
-    businessDate: OrderPersistence.getBusinessDate(),
+    stationNumber: lilposDataService.getStationNumber(),
+    businessDate: lilposDataService.getBusinessDate(),
     createdTimestamp: nowIso(),
     updatedTimestamp: nowIso(),
     orderType: payload.orderType,
@@ -2589,6 +2542,12 @@ function completePayLaterOrder() {
     status: 'open',
     paymentStatus: 'pay_later',
     paid: false,
+    paymentMethodSummary: '',
+    paymentLines: [],
+    auditEvents: [
+      { event: 'Entered', timestamp: nowIso(), employeeShortName: 'System' },
+      { event: 'Sent', timestamp: nowIso(), employeeShortName: 'System' }
+    ],
     customer: payload.customer,
     customerSnapshot: payload.customer,
     customerInfo: payload.customer,
@@ -2601,8 +2560,57 @@ function completePayLaterOrder() {
     payloadSnapshot: payload
   };
 
-  const persisted = OrderPersistence.persistOrder(persistedOrder);
-  if (!persisted) {
+  try {
+    const snapshot = await lilposDataService.saveOrderHistorySnapshot({
+      orderId: persistedOrder.id,
+      displayOrderNumber: persistedOrder.orderNumber,
+      stationId: persistedOrder.stationNumber,
+      businessDate: persistedOrder.businessDate,
+      orderType: persistedOrder.orderType,
+      orderStatus: persistedOrder.status,
+      paymentStatus: persistedOrder.paymentStatus,
+      storedDisplayName: persistedOrder.customer?.name || 'Guest',
+      storedPhone: persistedOrder.customer?.phone || '',
+      storedAddressSummary: persistedOrder.customer?.address1 || '',
+      subtotal: persistedOrder.subtotal,
+      tax: persistedOrder.tax,
+      total: persistedOrder.total,
+      amountPaid: 0,
+      openedAt: persistedOrder.createdTimestamp,
+      sentAt: persistedOrder.createdTimestamp,
+      createdAt: persistedOrder.createdTimestamp,
+      updatedAt: persistedOrder.updatedTimestamp,
+      sourceSnapshot: {
+        orderSpecialInstructions: persistedOrder.orderSpecialInstructions,
+        timingType: persistedOrder.timingType,
+        asapTime: persistedOrder.asapTime,
+        futureDateTime: persistedOrder.futureDateTime,
+        orderSource: persistedOrder.orderSource,
+        customer: persistedOrder.customer,
+        paymentMethodSummary: persistedOrder.paymentMethodSummary
+      }
+    });
+
+    await lilposDataService.saveOrderHistoryItems(snapshot.historyId, persistedOrder.id, persistedOrder.lines || []);
+
+    for (const auditEvent of persistedOrder.auditEvents || []) {
+      await lilposDataService.appendOrderEvent({
+        orderId: persistedOrder.id,
+        historyId: snapshot.historyId,
+        businessDate: persistedOrder.businessDate,
+        label: auditEvent.event,
+        eventTimestamp: auditEvent.timestamp,
+        employeeShortName: auditEvent.employeeShortName || 'System'
+      });
+    }
+
+    await refreshPersistedOrdersCache({ refreshNextOrderNumber: true, renderAfter: false });
+    state.persistedOrderDetailCacheById[persistedOrder.id] = {
+      ...persistedOrder,
+      status: normalizeOrderStatus(persistedOrder)
+    };
+  } catch (err) {
+    console.error('Unable to persist order history record:', err);
     state.orderSendLocked = false;
     alert('Unable to persist this order locally. Ticket has not been reset.');
     return;
@@ -2808,53 +2816,47 @@ window.onunhandledrejection = function(event) {
   console.error(event.reason);
 };
 
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(STORE)) {
-        req.result.createObjectStore(STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function dbPut(key: any, value: any): Promise<boolean> {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put(value, key);
-    tx.oncomplete = () => resolve(true);
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function dbGet(key: any): Promise<any> {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readonly');
-    const req = tx.objectStore(STORE).get(key);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function dbClear(): Promise<boolean> {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).clear();
-    tx.oncomplete = () => resolve(true);
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 const sample = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const nowIso = () => new Date().toISOString();
 const makeId = (prefix, i) => `${prefix}_${String(i).padStart(5, '0')}`;
+
+function persistedOrders() {
+  return Array.isArray(state.persistedOrdersCache) ? state.persistedOrdersCache : [];
+}
+
+async function refreshPersistedOrdersCache(options: any = {}) {
+  const rows = await lilposDataService.listHistoricalOrdersCompat();
+  state.persistedOrdersCache = rows;
+  if (options.refreshNextOrderNumber !== false) {
+    state.nextDisplayOrderNumber = await lilposDataService.buildOrderNumber();
+  }
+  if (options.renderAfter) {
+    render();
+  }
+}
+
+async function hydratePersistedOrderDetail(orderId) {
+  const id = String(orderId || '').trim();
+  if (!id) return null;
+  if (state.persistedOrderDetailCacheById[id]) {
+    return state.persistedOrderDetailCacheById[id];
+  }
+  const detail = await lilposDataService.getHistoricalOrderByIdCompat(id);
+  if (detail) {
+    state.persistedOrderDetailCacheById[id] = detail;
+  }
+  return detail;
+}
+
+async function selectOrderForDetail(orderId) {
+  state.selectedOrderId = orderId || null;
+  state.previousOrderAuditExpanded = false;
+  if (state.selectedOrderId) {
+    await hydratePersistedOrderDetail(state.selectedOrderId);
+  }
+  render();
+}
 
 function uid() {
   return 'line_' + Math.random().toString(36).slice(2) + Date.now();
@@ -3836,8 +3838,10 @@ function ensureActiveCategory() {
 }
 
 async function loadFromDb() {
+  await lilposDataService.ensureHistoryPersistenceReady();
+  await refreshPersistedOrdersCache({ refreshNextOrderNumber: true, renderAfter: false });
   const t0 = performance.now();
-  const cached = await dbGet('activeMenu');
+  const cached = await lilposDataService.getRuntimeCache('activeMenu');
   const ms = +(performance.now() - t0).toFixed(2);
   if (cached) {
     loadRuntimeIntoState(cached);
@@ -3851,7 +3855,7 @@ async function loadFromDb() {
 
     // Boundary for future obfuscation: persisted runtime package can later be compact/encrypted/signed/compressed.
     if (cached.runtimeKind !== 'lilpos-runtime-package-v1') {
-      await dbPut('activeMenu', state.menu);
+      await lilposDataService.saveRuntimeCache('activeMenu', state.menu);
     }
 
     ensureActiveCategory();
@@ -3866,11 +3870,11 @@ async function generateAndStore() {
   loadRuntimeIntoState(runtime);
   const bytes = new Blob([JSON.stringify(state.menu)]).size;
   const t0 = performance.now();
-  await dbPut('activeMenu', state.menu);
+  await lilposDataService.saveRuntimeCache('activeMenu', state.menu);
   const storeMs = +(performance.now() - t0).toFixed(2);
 
   const t1 = performance.now();
-  const back = await dbGet('activeMenu');
+  const back = await lilposDataService.getRuntimeCache('activeMenu');
   const readMs = +(performance.now() - t1).toFixed(2);
 
   loadRuntimeIntoState(back);
@@ -3892,7 +3896,7 @@ async function generateSeed(scale) {
 }
 
 async function clearAll() {
-  await dbClear();
+  await lilposDataService.clearRuntimeCache();
   Object.assign(state, { menu: null, metrics: {}, cart: [], selected: null, idx: null, category: VIEW_ALL_ITEMS, favoriteCategoryIds: [], sentOrdersToday: [], orderSpecialInstructions: '' });
   state.removeConfirmLineId = null;
   state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
@@ -4010,12 +4014,12 @@ function filteredOrderManagementRows(options: any = {}) {
   const applyQuery = options.applyQuery !== false;
   const q = applyQuery ? String(state.ordersQuery || '').trim().toLowerCase() : '';
   const nowTs = Date.now();
-  const persistedRows = OrderPersistence.getPersistedOrders().map((order) => ({
+  const persistedRows = persistedOrders().map((order) => ({
     id: order.id,
     number: order.orderNumber,
     customerName: order.customer?.name || 'Guest',
     orderType: order.orderType,
-    status: OrderPersistence.normalizeOrderStatus(order),
+    status: normalizeOrderStatus(order),
     source: order.orderSource,
     onlineOnly: String(order.orderSource || '').toLowerCase() === 'online',
     timeLabel: order.timingType === 'future' && order.futureDateTime
@@ -4032,7 +4036,7 @@ function filteredOrderManagementRows(options: any = {}) {
 
   const legacyRows = (state.mockOrders || []).map((order) => ({
     ...order,
-    status: OrderPersistence.normalizeOrderStatus(order),
+    status: normalizeOrderStatus(order),
     paymentStatus: order.paymentStatus || (order.status === 'completed' ? 'paid' : 'unpaid'),
     paid: typeof order.paid === 'boolean' ? order.paid : order.status === 'completed',
     timeLabel: order.timingType === 'future' && order.futureDateTime
@@ -4068,17 +4072,227 @@ function filteredOrderManagementRows(options: any = {}) {
   return filtered;
 }
 
+function formatOrderNumberForDisplay(orderNumber) {
+  const raw = String(orderNumber || '').trim();
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) return String(Number(raw));
+  const stationPattern = raw.match(/^(\d+)-0*(\d+)$/);
+  if (stationPattern) return `${stationPattern[1]}-${Number(stationPattern[2])}`;
+  return raw;
+}
+
+function resolveStoredOrderIdentity(order) {
+  const candidates = [
+    order?.customer?.name,
+    order?.customerName,
+    order?.customerLabel,
+    order?.orderLabel,
+    order?.orderIdentity,
+    order?.displayName
+  ];
+  const best = candidates.find((value) => String(value || '').trim());
+  return String(best || 'Guest').trim();
+}
+
+function resolvePreviousOrderPaymentLines(order) {
+  const sources = [
+    order?.paymentLines,
+    order?.rawSnapshot?.paymentLines,
+    order?.payloadSnapshot?.paymentLines,
+    order?.payment?.lines
+  ];
+  const lines = sources.find((entry) => Array.isArray(entry) && entry.length) || [];
+  return lines.map((line) => {
+    const lastFourRaw = String(line?.lastFour || line?.last4 || line?.cardLastFour || '').replace(/\D/g, '');
+    return {
+      paymentType: String(line?.paymentType || line?.type || line?.tenderType || '').trim(),
+      amount: Number(line?.amount || line?.paidAmount || 0) || 0,
+      cardBrand: String(line?.cardBrand || line?.brand || line?.cardType || '').trim(),
+      lastFour: lastFourRaw.length >= 4 ? lastFourRaw.slice(-4) : ''
+    };
+  });
+}
+
+function paymentTypeToIcon(typeLabel) {
+  const normalized = String(typeLabel || '').toLowerCase();
+  if (normalized.includes('cash')) return 'cash';
+  if (normalized.includes('gift')) return 'gift';
+  if (normalized.includes('split')) return 'split';
+  if (normalized.includes('text') || normalized.includes('link') || normalized.includes('phone')) return 'link';
+  if (normalized.includes('card') || normalized.includes('credit') || normalized.includes('debit') || normalized.includes('visa') || normalized.includes('mastercard') || normalized.includes('amex') || normalized.includes('discover')) return 'card';
+  return 'payment';
+}
+
+function paymentTypeDisplayLabel(typeLabel) {
+  const normalized = String(typeLabel || '').toLowerCase();
+  if (normalized.includes('cash')) return 'Cash';
+  if (normalized.includes('gift')) return 'Gift Card';
+  if (normalized.includes('split')) return 'Split Tender';
+  if (normalized.includes('text') || normalized.includes('link') || normalized.includes('phone')) return 'Text Payment Link';
+  if (normalized.includes('card') || normalized.includes('credit') || normalized.includes('debit') || normalized.includes('visa') || normalized.includes('mastercard') || normalized.includes('amex') || normalized.includes('discover')) return 'Credit/Debit Card';
+  return typeLabel ? String(typeLabel) : 'Other tender';
+}
+
+function previousOrderPaymentSummaryHtml(order) {
+  const status = String(order?.status || '').toLowerCase();
+  const isClosedOrCompleted = status === 'completed' || status === 'closed';
+  if (!isClosedOrCompleted || !order?.paid) return '';
+
+  const lines = resolvePreviousOrderPaymentLines(order).filter((line) => line.paymentType || line.amount > 0 || line.cardBrand || line.lastFour);
+  const summaryText = String(order?.paymentMethodSummary || '').trim();
+
+  if (!lines.length && !summaryText) {
+    return `<div class="order-payment-method unavailable"><span class="order-payment-method-icon icon-glyph">${navIcon('payment')}</span><span>Payment method unavailable</span></div>`;
+  }
+
+  if (lines.length > 1) {
+    const withAmounts = lines.filter((line) => line.amount > 0);
+    const splitDetails = withAmounts.length
+      ? withAmounts.map((line) => `${paymentTypeDisplayLabel(line.paymentType)} ${money(line.amount)}`).join(' • ')
+      : 'Split Tender';
+    return `<div class="order-payment-method split"><span class="order-payment-method-icon icon-glyph">${navIcon('split')}</span><span>${h(splitDetails)}</span></div>`;
+  }
+
+  const line = lines[0] || null;
+  const iconName = line ? paymentTypeToIcon(line.paymentType) : paymentTypeToIcon(summaryText);
+  let displayLabel = summaryText;
+  if (line) {
+    const normalizedLabel = paymentTypeDisplayLabel(line.paymentType);
+    if (normalizedLabel === 'Credit/Debit Card' && line.cardBrand && line.lastFour) {
+      const brand = line.cardBrand.charAt(0).toUpperCase() + line.cardBrand.slice(1).toLowerCase();
+      displayLabel = `${brand} •••• ${line.lastFour}`;
+    } else if (normalizedLabel === 'Credit/Debit Card' && summaryText) {
+      displayLabel = summaryText;
+    } else {
+      displayLabel = normalizedLabel;
+    }
+  }
+
+  return `<div class="order-payment-method"><span class="order-payment-method-icon icon-glyph">${navIcon(iconName)}</span><span>${h(displayLabel || 'Payment method unavailable')}</span></div>`;
+}
+
+function formatAuditEventTime(value) {
+  if (!value) return 'Unknown time';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function normalizeAuditEventLabel(label) {
+  const raw = String(label || '').trim();
+  if (!raw) return 'Updated';
+  const lower = raw.toLowerCase();
+  const map = {
+    entered: 'Entered',
+    updated: 'Updated',
+    sent: 'Sent',
+    paid: 'Paid',
+    partially_paid: 'Partially Paid',
+    partiallypaid: 'Partially Paid',
+    completed: 'Completed',
+    closed: 'Closed',
+    canceled: 'Canceled',
+    voided: 'Voided',
+    refunded: 'Refunded',
+    reopened: 'Reopened',
+    reprinted: 'Reprinted'
+  };
+  return map[lower] || raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
+function resolveOrderAuditRows(order) {
+  const authoritativeSources = [
+    order?.auditEvents,
+    order?.auditTrail,
+    order?.history,
+    order?.events,
+    order?.rawSnapshot?.auditEvents,
+    order?.payloadSnapshot?.auditEvents
+  ];
+  const source = authoritativeSources.find((entry) => Array.isArray(entry) && entry.length) || [];
+  if (source.length) {
+    return source.map((event) => ({
+      label: normalizeAuditEventLabel(event?.label || event?.event || event?.type || event?.status || 'Updated'),
+      timestamp: event?.timestamp || event?.at || event?.createdAt || event?.time || event?.when || null,
+      employee: String(event?.employeeShortName || event?.employeeInitials || event?.employeeCode || event?.employeeId || event?.employee || event?.by || 'System').trim() || 'System'
+    })).sort((a, b) => {
+      const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return aTime - bTime;
+    });
+  }
+
+  const fallbackRows = [];
+  if (order?.createdTimestamp) fallbackRows.push({ label: 'Entered', timestamp: order.createdTimestamp, employee: 'System' });
+  if (order?.paid && order?.updatedTimestamp) fallbackRows.push({ label: 'Paid', timestamp: order.updatedTimestamp, employee: 'System' });
+  if ((String(order?.status || '').toLowerCase() === 'completed' || String(order?.status || '').toLowerCase() === 'closed') && order?.updatedTimestamp) {
+    fallbackRows.push({ label: 'Closed', timestamp: order.updatedTimestamp, employee: 'System' });
+  }
+  return fallbackRows;
+}
+
+function previousOrderHistorySummaryLine(order) {
+  const typeLabel = ORDER_TYPES[order?.orderType] || order?.orderType || 'Unknown';
+  const statusLabel = String(order?.status || 'open');
+  const paymentLabel = String(order?.paymentStatus || (order?.paid ? 'paid' : 'unpaid'));
+  const timeLabel = String(order?.timeLabel || '').trim();
+  const timingLabel = order?.timingType === 'future' && order?.futureDateTime
+    ? `Future: ${formatFutureLabel(order.futureDateTime)}`
+    : 'ASAP';
+  const rightTail = [timeLabel, timingLabel].filter(Boolean).join(' ');
+  if (!rightTail) return `${typeLabel} | ${statusLabel} | ${paymentLabel}`;
+  return `${typeLabel} | ${statusLabel} | ${paymentLabel} | ${rightTail}`;
+}
+
+function previousOrderAuditTrailHtml(order) {
+  const rows = resolveOrderAuditRows(order);
+  const expanded = !!state.previousOrderAuditExpanded;
+  const toggleGlyph = expanded ? '&#9650;' : '&#9660;';
+  const summaryLine = previousOrderHistorySummaryLine(order);
+  return `
+    <div class="order-audit-trail">
+      <div class="order-audit-toggle-row">
+        <small class="order-audit-summary">${h(summaryLine)}</small>
+        <button
+          id="togglePreviousOrderAudit"
+          class="order-audit-toggle-btn"
+          aria-label="${expanded ? 'Collapse order history' : 'Expand order history'}"
+          aria-expanded="${expanded ? 'true' : 'false'}"
+          title="${expanded ? 'Collapse order history' : 'Expand order history'}"
+        >${toggleGlyph}</button>
+      </div>
+      ${expanded && rows.length ? `
+        <div class="order-audit-list">
+          ${rows.map((row) => `
+            <div class="order-audit-row">
+              <span class="order-audit-event">${h(row.label)}</span>
+              <span class="order-audit-time">${h(formatAuditEventTime(row.timestamp))}</span>
+              <span class="order-audit-employee">${h(row.employee || 'System')}</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
 function selectedOrderForDetail() {
   if (!state.selectedOrderId) return null;
-  const persistedOrder = OrderPersistence.getPersistedOrderById(state.selectedOrderId);
+  const persistedOrder = state.persistedOrderDetailCacheById[state.selectedOrderId]
+    || persistedOrders().find((entry) => entry.id === state.selectedOrderId)
+    || null;
   if (persistedOrder) {
     const customer = resolveOrderCustomerSnapshot(persistedOrder);
     const lines = Array.isArray(persistedOrder.lines) ? persistedOrder.lines : [];
-    const status = OrderPersistence.normalizeOrderStatus(persistedOrder);
+    const status = normalizeOrderStatus(persistedOrder);
     return {
       id: persistedOrder.id,
       number: persistedOrder.orderNumber,
       customerName: customer.name || 'Guest',
+      customerLabel: persistedOrder.customerLabel || persistedOrder.rawSnapshot?.customerLabel || '',
+      orderLabel: persistedOrder.orderLabel || persistedOrder.rawSnapshot?.orderLabel || '',
+      orderIdentity: persistedOrder.orderIdentity || persistedOrder.rawSnapshot?.orderIdentity || '',
+      displayName: persistedOrder.displayName || persistedOrder.rawSnapshot?.displayName || '',
       customer,
       orderType: persistedOrder.orderType,
       status,
@@ -4094,7 +4308,11 @@ function selectedOrderForDetail() {
       asapTime: persistedOrder.asapTime,
       futureDateTime: persistedOrder.futureDateTime,
       orderSpecialInstructions: persistedOrder.orderSpecialInstructions || persistedOrder.rawSnapshot?.orderSpecialInstructions || '',
+      paymentMethodSummary: persistedOrder.paymentMethodSummary || persistedOrder.rawSnapshot?.paymentMethodSummary || '',
+      paymentLines: persistedOrder.paymentLines || persistedOrder.rawSnapshot?.paymentLines || persistedOrder.payloadSnapshot?.paymentLines || [],
+      auditEvents: persistedOrder.auditEvents || persistedOrder.auditTrail || persistedOrder.history || persistedOrder.events || persistedOrder.rawSnapshot?.auditEvents || persistedOrder.payloadSnapshot?.auditEvents || [],
       createdTimestamp: persistedOrder.createdTimestamp,
+      updatedTimestamp: persistedOrder.updatedTimestamp,
       lines,
       isPersisted: true
     };
@@ -4108,11 +4326,15 @@ function selectedOrderForDetail() {
       id: order.id,
       number: order.number,
       customerName: order.customerName || 'Guest',
+      customerLabel: order.customerLabel || '',
+      orderLabel: order.orderLabel || '',
+      orderIdentity: order.orderIdentity || '',
+      displayName: order.displayName || '',
       customer: {
         name: order.customerName || 'Guest'
       },
       orderType: order.orderType,
-      status: OrderPersistence.normalizeOrderStatus(order),
+      status: normalizeOrderStatus(order),
       paymentStatus: order.paymentStatus || (order.status === 'completed' ? 'paid' : 'unpaid'),
       paid: typeof order.paid === 'boolean' ? order.paid : order.status === 'completed',
       source: order.source,
@@ -4125,7 +4347,11 @@ function selectedOrderForDetail() {
       asapTime: null,
       futureDateTime: null,
       orderSpecialInstructions: order.orderSpecialInstructions || '',
+      paymentMethodSummary: order.paymentMethodSummary || '',
+      paymentLines: order.paymentLines || [],
+      auditEvents: order.auditEvents || order.auditTrail || order.history || order.events || [],
       createdTimestamp: null,
+      updatedTimestamp: null,
       lines: (order.lines || []).map((name, idx) => ({
         lineId: `legacy_${order.id}_${idx}`,
         name,
@@ -4414,7 +4640,7 @@ async function persistMenuLocal() {
   if (!state.menu) return;
   syncMenuUiState();
   // Future obfuscation boundary: this payload can later become compact/encrypted/signed/compressed.
-  await dbPut('activeMenu', state.menu);
+  await lilposDataService.saveRuntimeCache('activeMenu', state.menu);
 }
 
 function closeAddItemDialog() {
@@ -5460,7 +5686,14 @@ function navIcon(name) {
     orders: '<path d="M7 4h10l1 2v14l-2-1-2 1-2-1-2 1-2-1-2 1V6l1-2z"></path><path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M9 17h4"></path>',
     calendar: '<rect x="5" y="6" width="14" height="13" rx="2"></rect><path d="M8 4v4"></path><path d="M16 4v4"></path><path d="M5 10h14"></path>',
     customer: '<circle cx="12" cy="8" r="3"></circle><path d="M6 19c.8-3.2 3-5 6-5s5.2 1.8 6 5"></path>',
-    gear: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>'
+    gear: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>',
+    pencil: '<path d="M16.9 3.9a2.1 2.1 0 0 1 3 3L9.2 17.6l-4.4 1.1 1.1-4.4L16.9 3.9z"></path><path d="M15.5 5.3l3.2 3.2"></path>',
+    cash: '<rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle><path d="M7 9h.01M17 15h.01"></path>',
+    card: '<rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M3 10h18"></path><path d="M7 15h4"></path>',
+    gift: '<rect x="4" y="8" width="16" height="12" rx="2"></rect><path d="M12 8v12"></path><path d="M4 12h16"></path><path d="M12 8c-1.8 0-3.2-1.2-3.2-2.7S10 3 12 5.4C14 3 15.2 3.8 15.2 5.3S13.8 8 12 8z"></path>',
+    split: '<path d="M12 4v16"></path><path d="M4 8h7"></path><path d="M13 16h7"></path><path d="M6 6l-2 2 2 2"></path><path d="M18 14l2 2-2 2"></path>',
+    link: '<path d="M10.5 13.5l3-3"></path><path d="M8.2 15.8l-1.4 1.4a3 3 0 0 1-4.2-4.2l2.1-2.1a3 3 0 0 1 4.2 0"></path><path d="M15.8 8.2l1.4-1.4a3 3 0 1 1 4.2 4.2l-2.1 2.1a3 3 0 0 1-4.2 0"></path>',
+    payment: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18"></path><path d="M7 15h3"></path><path d="M12 15h5"></path>'
   };
   return `<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
 }
@@ -5674,13 +5907,14 @@ function renderOrderTile(order) {
   const paid = !!order.paid || String(order.paymentStatus || '').toLowerCase() === 'paid';
   const paidClass = paid ? 'paid' : 'unpaid';
   const paidText = paid ? 'PAID' : 'NOT PAID';
+  const displayNumber = formatOrderNumberForDisplay(order.number);
   return `
     <button class="order-mgmt-tile" data-open-order="${order.id}">
       <div class="order-tile-badge-row">
         <span class="order-payment-badge ${paidClass}">${paidText}</span>
       </div>
       <div class="order-mgmt-top">
-        <b>#${h(order.number)}</b>
+        <b>#${h(displayNumber)}</b>
         <span class="order-status ${order.status}">${h(order.status)}</span>
       </div>
       <div class="order-mgmt-mid">
@@ -6042,12 +6276,20 @@ function renderMainAreaView(filtered) {
   return renderHomeMenuView(filtered);
 }
 
-function previousOrderCustomerBubbleHtml(customer) {
-  const safeCustomer = customer || {};
+function previousOrderCustomerBubbleHtml(order) {
+  const safeCustomer = order?.customer || {};
+  const identityLabel = resolveStoredOrderIdentity({
+    customerName: order?.customerName,
+    customerLabel: order?.customerLabel,
+    orderLabel: order?.orderLabel,
+    orderIdentity: order?.orderIdentity,
+    displayName: order?.displayName,
+    customer: safeCustomer,
+    customerNameFallback: safeCustomer.name
+  });
   const cityStateZip = [safeCustomer.city, safeCustomer.state, safeCustomer.zip].filter(Boolean).join(' ');
   const hasDetails = !!(
-    String(safeCustomer.name || '').trim()
-    || normalizePhone(safeCustomer.phone)
+    normalizePhone(safeCustomer.phone)
     || String(safeCustomer.address1 || '').trim()
     || cityStateZip
     || String(safeCustomer.allergies || '').trim()
@@ -6057,8 +6299,10 @@ function previousOrderCustomerBubbleHtml(customer) {
 
   if (!hasDetails) {
     return `
-      <div class="customer-summary previous-order-customer empty-summary">
-        <b>No customer information on this order</b>
+      <div class="customer-summary previous-order-customer">
+        <div class="sum-top">
+          <b>${h(identityLabel || 'Guest')}</b>
+        </div>
       </div>
     `;
   }
@@ -6066,7 +6310,7 @@ function previousOrderCustomerBubbleHtml(customer) {
   return `
     <div class="customer-summary previous-order-customer previous-order-customer-populated">
       <div class="sum-top">
-        <b>${h(safeCustomer.name || 'Guest')}</b>
+        <b>${h(identityLabel || 'Guest')}</b>
         ${safeCustomer.phone ? `<span>${h(phoneDisplayValue(safeCustomer.phone))}</span>` : ''}
       </div>
       ${safeCustomer.address1 ? `<small><b>Address:</b> ${h(safeCustomer.address1)}</small>` : ''}
@@ -6082,23 +6326,24 @@ function renderOrderDetailInTicketPane() {
   const order = selectedOrderForDetail();
   if (!order) return '';
   const typeLabel = ORDER_TYPES[order.orderType] || order.orderType;
-  const timingLabel = order.timingType === 'future' && order.futureDateTime
-    ? `Future: ${formatFutureLabel(order.futureDateTime)}`
-    : 'ASAP';
   const paidClass = order.paid ? 'paid' : 'unpaid';
   const paidText = order.paid ? 'PAID' : 'NOT PAID';
-  const customer = order.customer || {};
+  const displayNumber = formatOrderNumberForDisplay(order.number);
   return `
     <section class="ticket-section order-detail-pane">
       <div class="order-detail-head">
-        <b>Viewing Order #${h(order.number)}</b>
-        <button id="clearOrderDetail" class="btn-secondary">Close</button>
+        <b>Viewing Order #${h(displayNumber)}</b>
+        <button id="previousOrderEditBtn" class="previous-order-edit-btn" title="Edit completed order (coming soon)" aria-label="Edit completed order (coming soon)">
+          <span class="icon-glyph">${navIcon('pencil')}</span>
+        </button>
       </div>
-      <div class="order-payment-badge ${paidClass}">${paidText}</div>
-      <small>${h(typeLabel)} | ${h(order.status)} | ${h(order.paymentStatus || 'unpaid')} | ${h(order.timeLabel || '')}</small>
-      <small>${h(timingLabel)}</small>
+      <div class="order-payment-row">
+        <div class="order-payment-badge ${paidClass}">${paidText}</div>
+        ${previousOrderPaymentSummaryHtml(order)}
+      </div>
+      ${previousOrderAuditTrailHtml(order)}
       ${order.orderSpecialInstructions ? `<small><b>Order Instructions:</b> ${h(order.orderSpecialInstructions)}</small>` : ''}
-      ${previousOrderCustomerBubbleHtml(customer)}
+      ${previousOrderCustomerBubbleHtml(order)}
       <div class="order-detail-lines">
         ${(order.lines || []).map((line) => {
           const lineName = line?.name || line?.itemName || line?.title || 'Item';
@@ -6140,9 +6385,10 @@ function ticketPanelHtml() {
   const timingLabel = state.timingType === 'future' && state.futureDateTime
     ? `Future: ${formatFutureLabel(state.futureDateTime)}`
     : (state.asapTime ? `Today ${formatTimeValueLabel(state.asapTime)}` : 'ASAP');
+  
   return `
-    <aside class="ticket-panel">
-      <div class="ticket-panel-fixed">
+    <aside class="ticket-panel" data-view-mode="${viewingPreviousOrder ? 'previous' : 'active'}">
+      <div class="ticket-panel-fixed ${viewingPreviousOrder ? 'is-hidden' : ''}">
         <div class="ticket-total-row ticket-section">
           <button id="newSaleBtn" class="btn-new-sale">New Sale</button>
           <div class="ticket-total-display">${money(ticketGrandTotal())}</div>
@@ -6177,60 +6423,66 @@ function ticketPanelHtml() {
           </button>
           ${businessSettings.dineInEnabled ? `<button data-order-type="dinein" class="pill order-type-tile ${state.orderType === 'dinein' ? 'active' : ''}"><span class="order-type-icon" aria-hidden="true">🪑</span><span class="order-type-label">Dine-In</span></button>` : ''}
         </div>
-        ${renderOrderDetailInTicketPane()}
         ${state.deliveryInfoMissing ? '<div class="ticket-section delivery-warning">Delivery requires customer name, phone, and address.</div>' : ''}
-        ${viewingPreviousOrder ? '' : `
-          <div class="customer-shell ticket-section ${state.customerPanelMode === 'entry' ? 'is-entry' : 'is-compact'}">
-            ${state.customerPanelMode === 'entry' ? expandedCustomerEntryHtml() : compactCustomerSummaryHtml()}
-          </div>
-        `}
+        <div class="customer-shell ticket-section ${state.customerPanelMode === 'entry' ? 'is-entry' : 'is-compact'}">
+          ${state.customerPanelMode === 'entry' ? expandedCustomerEntryHtml() : compactCustomerSummaryHtml()}
+        </div>
       </div>
       <div class="ticket-panel-scroll">
-        <div class="ticket-lines ticket-section">
-          ${state.cart.length === 0 ? '<p class="muted">NO ITEMS IN CHECKOUT</p>' : ''}
-          ${state.cart.map((l) => `
-            <div class="line-item">
-              <div class="line-main">
-                <b>${h(l.name)}</b>
-                ${l.size ? `<span>${h(l.size)}</span>` : ''}
-                ${groupedModifiersCartHtml(l.mods)}
-                ${l.specialInstruction ? `<small class="line-note">Note: ${h(l.specialInstruction)}</small>` : ''}
-                ${l.forName ? `<small class="line-for">For: ${h(l.forName)}</small>` : ''}
-              </div>
-              <div class="line-controls">
-                <button data-dec="${l.lineId}" class="qty-btn">-</button>
-                <span class="qty">${l.qty}</span>
-                <button data-inc="${l.lineId}" class="qty-btn">+</button>
-                <b>${money(l.price * l.qty)}</b>
-                <div class="line-actions">
-                  <button data-editmods="${l.lineId}" class="icon-btn" title="Edit item modifiers">✎</button>
-                  <button data-note="${l.lineId}" class="icon-btn" title="Item Note / Special Instruction">🗒</button>
-                  <button data-for="${l.lineId}" class="icon-btn" title="This item is for...">👤</button>
-                  <div class="remove-wrap">
-                    <button data-remove="${l.lineId}" class="icon-btn del-circle" title="Remove item">✕</button>
-                    ${state.removeConfirmLineId === l.lineId ? `<div class="remove-confirm"><span>Remove?</span><div><button data-remove-yes="${l.lineId}" class="btn-danger">Yes</button><button data-remove-no="${l.lineId}" class="btn-secondary">No</button></div></div>` : ''}
+        ${viewingPreviousOrder ? `
+          ${renderOrderDetailInTicketPane()}
+          <div class="ticket-footer ticket-section previous-order-footer">
+            <div class="ticket-actions primary-actions">
+              <button id="clearOrderDetail" class="btn-secondary" style="width: 100%;">Close</button>
+            </div>
+          </div>
+        ` : `
+          <div class="ticket-lines ticket-section">
+            ${state.cart.length === 0 ? '<p class="muted">NO ITEMS IN CHECKOUT</p>' : ''}
+            ${state.cart.map((l) => `
+              <div class="line-item">
+                <div class="line-main">
+                  <b>${h(l.name)}</b>
+                  ${l.size ? `<span>${h(l.size)}</span>` : ''}
+                  ${groupedModifiersCartHtml(l.mods)}
+                  ${l.specialInstruction ? `<small class="line-note">Note: ${h(l.specialInstruction)}</small>` : ''}
+                  ${l.forName ? `<small class="line-for">For: ${h(l.forName)}</small>` : ''}
+                </div>
+                <div class="line-controls">
+                  <button data-dec="${l.lineId}" class="qty-btn">-</button>
+                  <span class="qty">${l.qty}</span>
+                  <button data-inc="${l.lineId}" class="qty-btn">+</button>
+                  <b>${money(l.price * l.qty)}</b>
+                  <div class="line-actions">
+                    <button data-editmods="${l.lineId}" class="icon-btn" title="Edit item modifiers">✎</button>
+                    <button data-note="${l.lineId}" class="icon-btn" title="Item Note / Special Instruction">🗒</button>
+                    <button data-for="${l.lineId}" class="icon-btn" title="This item is for...">👤</button>
+                    <div class="remove-wrap">
+                      <button data-remove="${l.lineId}" class="icon-btn del-circle" title="Remove item">✕</button>
+                      ${state.removeConfirmLineId === l.lineId ? `<div class="remove-confirm"><span>Remove?</span><div><button data-remove-yes="${l.lineId}" class="btn-danger">Yes</button><button data-remove-no="${l.lineId}" class="btn-secondary">No</button></div></div>` : ''}
+                    </div>
                   </div>
                 </div>
               </div>
+            `).join('')}
+          </div>
+          <div class="ticket-footer ticket-section">
+            ${showOrderSpecialInstructions ? `<div id="orderSpecialInstructionsLive" class="order-special-live ${state.orderSpecialInstructions ? '' : 'is-hidden'}">${state.orderSpecialInstructions ? `Special Instructions: ${h(state.orderSpecialInstructions)}` : ''}</div>` : ''}
+            <div class="totals">
+              <div><span>Subtotal</span><b>${money(cartTotal())}</b></div>
+              <div><span>Tax</span><b>${money(ticketTax())}</b></div>
+              <div class="grand"><span>Total</span><b>${money(ticketGrandTotal())}</b></div>
             </div>
-          `).join('')}
-        </div>
-        <div class="ticket-footer ticket-section">
-          ${showOrderSpecialInstructions ? `<div id="orderSpecialInstructionsLive" class="order-special-live ${state.orderSpecialInstructions ? '' : 'is-hidden'}">${state.orderSpecialInstructions ? `Special Instructions: ${h(state.orderSpecialInstructions)}` : ''}</div>` : ''}
-          <div class="totals">
-            <div><span>Subtotal</span><b>${money(cartTotal())}</b></div>
-            <div><span>Tax</span><b>${money(ticketTax())}</b></div>
-            <div class="grand"><span>Total</span><b>${money(ticketGrandTotal())}</b></div>
+            <div class="ticket-actions primary-actions">
+              <button id="sendPayNow" class="btn-pay-now" ${sendState.payNow.ok ? '' : 'disabled'}>Send &amp; Pay Now</button>
+              <button id="sendPayLater" class="btn-pay-later" ${sendState.payLater.ok ? '' : 'disabled'}>Send &amp; Pay Later</button>
+            </div>
+            ${sendState.message ? `<small class="send-hint">${h(sendState.message)}</small>` : ''}
+            <div class="ticket-actions secondary-actions">
+              <button id="cancelSaleBottom" class="btn-cancel-sale" ${canCancelSale ? '' : 'disabled'}>Cancel Sale</button>
+            </div>
           </div>
-          <div class="ticket-actions primary-actions">
-            <button id="sendPayNow" class="btn-pay-now" ${sendState.payNow.ok ? '' : 'disabled'}>Send &amp; Pay Now</button>
-            <button id="sendPayLater" class="btn-pay-later" ${sendState.payLater.ok ? '' : 'disabled'}>Send &amp; Pay Later</button>
-          </div>
-          ${sendState.message ? `<small class="send-hint">${h(sendState.message)}</small>` : ''}
-          <div class="ticket-actions secondary-actions">
-            <button id="cancelSaleBottom" class="btn-cancel-sale" ${canCancelSale ? '' : 'disabled'}>Cancel Sale</button>
-          </div>
-        </div>
+        `}
       </div>
     </aside>
   `;
@@ -7252,9 +7504,8 @@ function attachEvents() {
   });
 
   document.querySelectorAll('[data-open-order]').forEach((b) => {
-    b.addEventListener('click', () => {
-      state.selectedOrderId = b.dataset.openOrder;
-      render();
+    b.addEventListener('click', async () => {
+      await selectOrderForDetail(b.dataset.openOrder);
     });
   });
 
@@ -7382,6 +7633,16 @@ function attachEvents() {
 
   $('#clearOrderDetail')?.addEventListener('click', () => {
     state.selectedOrderId = null;
+    state.previousOrderAuditExpanded = false;
+    render();
+  });
+
+  $('#previousOrderEditBtn')?.addEventListener('click', () => {
+    alert('Editing completed orders is not yet available');
+  });
+
+  $('#togglePreviousOrderAudit')?.addEventListener('click', () => {
+    state.previousOrderAuditExpanded = !state.previousOrderAuditExpanded;
     render();
   });
 
