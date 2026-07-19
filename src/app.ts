@@ -6142,90 +6142,94 @@ function ticketPanelHtml() {
     : (state.asapTime ? `Today ${formatTimeValueLabel(state.asapTime)}` : 'ASAP');
   return `
     <aside class="ticket-panel">
-      <div class="ticket-total-row ticket-section">
-        <button id="newSaleBtn" class="btn-new-sale">New Sale</button>
-        <div class="ticket-total-display">${money(ticketGrandTotal())}</div>
-      </div>
-      <div class="ticket-head ticket-section">
-        <div class="timing-wrap">
-          <small class="timing-badge ${state.timingType === 'future' ? 'future' : 'asap'}">${h(timingLabel)}</small>
-          ${state.timingType !== 'future' ? `<button id="asapClockBtn" class="timing-clock-btn" title="Adjust ASAP time" aria-label="Adjust ASAP time"><span class="icon-glyph">${navIcon('clock')}</span></button>` : ''}
+      <div class="ticket-panel-fixed">
+        <div class="ticket-total-row ticket-section">
+          <button id="newSaleBtn" class="btn-new-sale">New Sale</button>
+          <div class="ticket-total-display">${money(ticketGrandTotal())}</div>
         </div>
-        <div class="classifier-row">
-          <button id="ordersViewBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.orders ? 'active' : ''}" title="Orders management" aria-label="Orders management"><span class="icon-glyph">${navIcon('orders')}</span></button>
-          <button id="calendarClassifier" class="icon-pill ${state.timingType === 'future' ? 'active' : ''}" title="Future order" aria-label="Future order"><span class="icon-glyph">${navIcon('calendar')}</span></button>
-          <button id="customerMgmtBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.customers ? 'active' : ''}" title="Customer management" aria-label="Customer management"><span class="icon-glyph">${navIcon('customer')}</span></button>
+        <div class="ticket-head ticket-section">
+          <div class="timing-wrap">
+            <small class="timing-badge ${state.timingType === 'future' ? 'future' : 'asap'}">${h(timingLabel)}</small>
+            ${state.timingType !== 'future' ? `<button id="asapClockBtn" class="timing-clock-btn" title="Adjust ASAP time" aria-label="Adjust ASAP time"><span class="icon-glyph">${navIcon('clock')}</span></button>` : ''}
+          </div>
+          <div class="classifier-row">
+            <button id="ordersViewBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.orders ? 'active' : ''}" title="Orders management" aria-label="Orders management"><span class="icon-glyph">${navIcon('orders')}</span></button>
+            <button id="calendarClassifier" class="icon-pill ${state.timingType === 'future' ? 'active' : ''}" title="Future order" aria-label="Future order"><span class="icon-glyph">${navIcon('calendar')}</span></button>
+            <button id="customerMgmtBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.customers ? 'active' : ''}" title="Customer management" aria-label="Customer management"><span class="icon-glyph">${navIcon('customer')}</span></button>
+          </div>
         </div>
-      </div>
-      <div class="order-type ticket-section">
-        <button data-order-type="pickup" class="pill order-type-tile ${state.orderType === 'pickup' ? 'active' : ''}">
-          <span class="order-type-icon" aria-hidden="true">🚶</span>
-          <span class="order-type-label">Pickup</span>
-        </button>
-        <button data-order-type="delivery" class="pill order-type-tile ${state.orderType === 'delivery' ? 'active' : ''}">
-          <span class="order-type-icon" aria-hidden="true">🚚</span>
-          <span class="order-type-label">Delivery</span>
-        </button>
-        <button data-order-type="togo" class="pill order-type-tile ${state.orderType === 'togo' ? 'active' : ''}">
-          <span class="order-type-icon" aria-hidden="true">🛍</span>
-          <span class="order-type-label">To-Go</span>
-        </button>
-        <button data-order-type="tostay" class="pill order-type-tile ${state.orderType === 'tostay' ? 'active' : ''}">
-          <span class="order-type-icon" aria-hidden="true">🍽</span>
-          <span class="order-type-label">To-Stay</span>
-        </button>
-        ${businessSettings.dineInEnabled ? `<button data-order-type="dinein" class="pill order-type-tile ${state.orderType === 'dinein' ? 'active' : ''}"><span class="order-type-icon" aria-hidden="true">🪑</span><span class="order-type-label">Dine-In</span></button>` : ''}
-      </div>
-      ${renderOrderDetailInTicketPane()}
-      ${state.deliveryInfoMissing ? '<div class="ticket-section delivery-warning">Delivery requires customer name, phone, and address.</div>' : ''}
-      ${viewingPreviousOrder ? '' : `
-        <div class="customer-shell ticket-section ${state.customerPanelMode === 'entry' ? 'is-entry' : 'is-compact'}">
-          ${state.customerPanelMode === 'entry' ? expandedCustomerEntryHtml() : compactCustomerSummaryHtml()}
+        <div class="order-type ticket-section">
+          <button data-order-type="pickup" class="pill order-type-tile ${state.orderType === 'pickup' ? 'active' : ''}">
+            <span class="order-type-icon" aria-hidden="true">🚶</span>
+            <span class="order-type-label">Pickup</span>
+          </button>
+          <button data-order-type="delivery" class="pill order-type-tile ${state.orderType === 'delivery' ? 'active' : ''}">
+            <span class="order-type-icon" aria-hidden="true">🚚</span>
+            <span class="order-type-label">Delivery</span>
+          </button>
+          <button data-order-type="togo" class="pill order-type-tile ${state.orderType === 'togo' ? 'active' : ''}">
+            <span class="order-type-icon" aria-hidden="true">🛍</span>
+            <span class="order-type-label">To-Go</span>
+          </button>
+          <button data-order-type="tostay" class="pill order-type-tile ${state.orderType === 'tostay' ? 'active' : ''}">
+            <span class="order-type-icon" aria-hidden="true">🍽</span>
+            <span class="order-type-label">To-Stay</span>
+          </button>
+          ${businessSettings.dineInEnabled ? `<button data-order-type="dinein" class="pill order-type-tile ${state.orderType === 'dinein' ? 'active' : ''}"><span class="order-type-icon" aria-hidden="true">🪑</span><span class="order-type-label">Dine-In</span></button>` : ''}
         </div>
-      `}
-      <div class="ticket-lines ticket-section">
-        ${state.cart.length === 0 ? '<p class="muted">NO ITEMS IN CHECKOUT</p>' : ''}
-        ${state.cart.map((l) => `
-          <div class="line-item">
-            <div class="line-main">
-              <b>${h(l.name)}</b>
-              ${l.size ? `<span>${h(l.size)}</span>` : ''}
-              ${groupedModifiersCartHtml(l.mods)}
-              ${l.specialInstruction ? `<small class="line-note">Note: ${h(l.specialInstruction)}</small>` : ''}
-              ${l.forName ? `<small class="line-for">For: ${h(l.forName)}</small>` : ''}
-            </div>
-            <div class="line-controls">
-              <button data-dec="${l.lineId}" class="qty-btn">-</button>
-              <span class="qty">${l.qty}</span>
-              <button data-inc="${l.lineId}" class="qty-btn">+</button>
-              <b>${money(l.price * l.qty)}</b>
-              <div class="line-actions">
-                <button data-editmods="${l.lineId}" class="icon-btn" title="Edit item modifiers">✎</button>
-                <button data-note="${l.lineId}" class="icon-btn" title="Item Note / Special Instruction">🗒</button>
-                <button data-for="${l.lineId}" class="icon-btn" title="This item is for...">👤</button>
-                <div class="remove-wrap">
-                  <button data-remove="${l.lineId}" class="icon-btn del-circle" title="Remove item">✕</button>
-                  ${state.removeConfirmLineId === l.lineId ? `<div class="remove-confirm"><span>Remove?</span><div><button data-remove-yes="${l.lineId}" class="btn-danger">Yes</button><button data-remove-no="${l.lineId}" class="btn-secondary">No</button></div></div>` : ''}
+        ${renderOrderDetailInTicketPane()}
+        ${state.deliveryInfoMissing ? '<div class="ticket-section delivery-warning">Delivery requires customer name, phone, and address.</div>' : ''}
+        ${viewingPreviousOrder ? '' : `
+          <div class="customer-shell ticket-section ${state.customerPanelMode === 'entry' ? 'is-entry' : 'is-compact'}">
+            ${state.customerPanelMode === 'entry' ? expandedCustomerEntryHtml() : compactCustomerSummaryHtml()}
+          </div>
+        `}
+      </div>
+      <div class="ticket-panel-scroll">
+        <div class="ticket-lines ticket-section">
+          ${state.cart.length === 0 ? '<p class="muted">NO ITEMS IN CHECKOUT</p>' : ''}
+          ${state.cart.map((l) => `
+            <div class="line-item">
+              <div class="line-main">
+                <b>${h(l.name)}</b>
+                ${l.size ? `<span>${h(l.size)}</span>` : ''}
+                ${groupedModifiersCartHtml(l.mods)}
+                ${l.specialInstruction ? `<small class="line-note">Note: ${h(l.specialInstruction)}</small>` : ''}
+                ${l.forName ? `<small class="line-for">For: ${h(l.forName)}</small>` : ''}
+              </div>
+              <div class="line-controls">
+                <button data-dec="${l.lineId}" class="qty-btn">-</button>
+                <span class="qty">${l.qty}</span>
+                <button data-inc="${l.lineId}" class="qty-btn">+</button>
+                <b>${money(l.price * l.qty)}</b>
+                <div class="line-actions">
+                  <button data-editmods="${l.lineId}" class="icon-btn" title="Edit item modifiers">✎</button>
+                  <button data-note="${l.lineId}" class="icon-btn" title="Item Note / Special Instruction">🗒</button>
+                  <button data-for="${l.lineId}" class="icon-btn" title="This item is for...">👤</button>
+                  <div class="remove-wrap">
+                    <button data-remove="${l.lineId}" class="icon-btn del-circle" title="Remove item">✕</button>
+                    ${state.removeConfirmLineId === l.lineId ? `<div class="remove-confirm"><span>Remove?</span><div><button data-remove-yes="${l.lineId}" class="btn-danger">Yes</button><button data-remove-no="${l.lineId}" class="btn-secondary">No</button></div></div>` : ''}
+                  </div>
                 </div>
               </div>
             </div>
+          `).join('')}
+        </div>
+        <div class="ticket-footer ticket-section">
+          ${showOrderSpecialInstructions ? `<div id="orderSpecialInstructionsLive" class="order-special-live ${state.orderSpecialInstructions ? '' : 'is-hidden'}">${state.orderSpecialInstructions ? `Special Instructions: ${h(state.orderSpecialInstructions)}` : ''}</div>` : ''}
+          <div class="totals">
+            <div><span>Subtotal</span><b>${money(cartTotal())}</b></div>
+            <div><span>Tax</span><b>${money(ticketTax())}</b></div>
+            <div class="grand"><span>Total</span><b>${money(ticketGrandTotal())}</b></div>
           </div>
-        `).join('')}
-      </div>
-      <div class="ticket-footer ticket-section">
-        ${showOrderSpecialInstructions ? `<div id="orderSpecialInstructionsLive" class="order-special-live ${state.orderSpecialInstructions ? '' : 'is-hidden'}">${state.orderSpecialInstructions ? `Special Instructions: ${h(state.orderSpecialInstructions)}` : ''}</div>` : ''}
-        <div class="totals">
-          <div><span>Subtotal</span><b>${money(cartTotal())}</b></div>
-          <div><span>Tax</span><b>${money(ticketTax())}</b></div>
-          <div class="grand"><span>Total</span><b>${money(ticketGrandTotal())}</b></div>
-        </div>
-        <div class="ticket-actions primary-actions">
-          <button id="sendPayNow" class="btn-pay-now" ${sendState.payNow.ok ? '' : 'disabled'}>Send &amp; Pay Now</button>
-          <button id="sendPayLater" class="btn-pay-later" ${sendState.payLater.ok ? '' : 'disabled'}>Send &amp; Pay Later</button>
-        </div>
-        ${sendState.message ? `<small class="send-hint">${h(sendState.message)}</small>` : ''}
-        <div class="ticket-actions secondary-actions">
-          <button id="cancelSaleBottom" class="btn-cancel-sale" ${canCancelSale ? '' : 'disabled'}>Cancel Sale</button>
+          <div class="ticket-actions primary-actions">
+            <button id="sendPayNow" class="btn-pay-now" ${sendState.payNow.ok ? '' : 'disabled'}>Send &amp; Pay Now</button>
+            <button id="sendPayLater" class="btn-pay-later" ${sendState.payLater.ok ? '' : 'disabled'}>Send &amp; Pay Later</button>
+          </div>
+          ${sendState.message ? `<small class="send-hint">${h(sendState.message)}</small>` : ''}
+          <div class="ticket-actions secondary-actions">
+            <button id="cancelSaleBottom" class="btn-cancel-sale" ${canCancelSale ? '' : 'disabled'}>Cancel Sale</button>
+          </div>
         </div>
       </div>
     </aside>
@@ -8133,6 +8137,21 @@ function attachEvents() {
     state.offline = !state.offline;
     render();
   });
+
+  // Handle scroll state for ticket-panel-scroll shadow/divider
+  const ticketPanelScroll = document.querySelector('.ticket-panel-scroll');
+  if (ticketPanelScroll) {
+    const updateScrollState = () => {
+      if (ticketPanelScroll.scrollTop > 0) {
+        ticketPanelScroll.classList.add('is-scrolled');
+      } else {
+        ticketPanelScroll.classList.remove('is-scrolled');
+      }
+    };
+    ticketPanelScroll.addEventListener('scroll', updateScrollState);
+    // Call once on attach to set initial state
+    updateScrollState();
+  }
 }
 
 hydrateManagerSettingsFromStorage();
