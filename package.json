@@ -6,13 +6,17 @@
     "dev": "npm run build && npx --yes http-server . -p 8001 -c-1",
     "dev:vite": "vite --host 127.0.0.1 --port 8001 --strictPort",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "build": "tsc -p tsconfig.json && node -e \"const fs=require('fs'); fs.copyFileSync('dist/sw.js','sw.js'); fs.copyFileSync('dist/sw.js.map','sw.js.map'); fs.rmSync('public',{recursive:true,force:true}); fs.mkdirSync('public/dist',{recursive:true}); fs.cpSync('dist','public/dist',{recursive:true}); fs.cpSync('icons','public/icons',{recursive:true}); ['index.html','styles.css','manifest.webmanifest','sw.js','sw.js.map'].forEach(f=>fs.copyFileSync(f,'public/'+f));\"",
     "cf:dev": "npm run build && wrangler dev",
     "cf:deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {
     "typescript": "^5.8.3",
-    "vite": "^8.1.4",
+    "vite": "^8.1.5",
+    "vitest": "^3.2.4",
+    "jsdom": "^26.1.0",
     "wrangler": "^4.107.1"
   }
 }

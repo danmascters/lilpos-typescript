@@ -31,6 +31,7 @@ const MAIN_VIEWS = {
   menu: 'menu',
   orders: 'orders',
   customers: 'customers',
+  payment: 'payment',
   managerPin: 'managerPin',
   managerSettings: 'managerSettings'
 };
@@ -416,6 +417,8 @@ const state: any = {
     entryAmount: '0.00',
     paymentLines: []
   },
+  paymentPaneInput: null,
+  paymentPaneState: null,
   orderSendLocked: false,
   orderNumberDialog: {
     open: false,
@@ -1007,9 +1010,9 @@ const keyboardController = (() => {
           { label: 'M', value: 'm' }
         ], 'micro-keyboard-row micro-keyboard-row-7')}
         ${keyboardRowHtml([
-          { label: 'Backspace', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-action-key' },
+          { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-action-key' },
           { label: 'Space', value: ' ', action: 'space', sizeClass: 'micro-keyboard-action-key' },
-          { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-action-key' }
+          { label: 'Backspace', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-action-key' }
         ], 'micro-keyboard-actions')}
       </div>
     `;
@@ -1404,6 +1407,14 @@ const keyboardController = (() => {
     activeIntentChips = [];
   }
 
+  function closeKeyboardFromDone() {
+    // Ensure focus-out reconciliation does not immediately reopen after Done.
+    suppressFocusOutClose = false;
+    hideKeyboard();
+    const active = document.activeElement as HTMLElement | null;
+    if (active && typeof active.blur === 'function') active.blur();
+  }
+
   function getKeyboardMode() {
     return mode;
   }
@@ -1459,6 +1470,7 @@ const keyboardController = (() => {
     shouldShowCustomKeyboard,
     showKeyboardForInput,
     hideKeyboard,
+    closeKeyboardFromDone,
     isSupportedInput,
     getActiveInput,
     positionMicroKeyboard,
@@ -1511,9 +1523,7 @@ function installKeyboardLifecycleEvents() {
     const el = event.target as Element;
     if (!el) return;
     if (!el.closest('[data-kbd-done]')) return;
-    keyboardController.hideKeyboard();
-    const active = document.activeElement as HTMLElement | null;
-    if (active && typeof active.blur === 'function') active.blur();
+    keyboardController.closeKeyboardFromDone();
   });
 
   document.addEventListener('keydown', (event) => {
@@ -1525,6 +1535,12 @@ function installKeyboardLifecycleEvents() {
     const el = event.target as Element;
     if (!el) return;
     if (!keyboardController.isElementInsideKeyboard(el)) return;
+    if (el.closest('[data-kbd-done]')) {
+      keyboardController.closeKeyboardFromDone();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     keyboardController.markInternalPointerInteraction();
     event.preventDefault();
     event.stopPropagation();
@@ -1573,11 +1589,11 @@ function installKeyboardLifecycleEvents() {
     if (!el) return;
     if (!el.closest('[data-order-type],[data-cat],[data-item],[data-pizza-nav],[data-pizza-filter],[data-mod-group],[data-pre-group]')) return;
     window.setTimeout(() => {
-      const active = keyboardController.getActiveInput();
-      if (!active || !document.contains(active)) return;
+      const focused = document.activeElement as Element | null;
+      if (!keyboardController.isSupportedInput(focused)) return;
       if (keyboardController.getKeyboardMode() !== 'micro') return;
       if (keyboardController.getActiveInputKind() !== 'text') return;
-      keyboardController.showKeyboardForInput(active, { source: 'context-change' });
+      keyboardController.showKeyboardForInput(focused as HTMLInputElement | HTMLTextAreaElement, { source: 'context-change' });
     }, 0);
   });
 
@@ -2062,6 +2078,244 @@ function openPaymentDialog() {
     entryAmount: '0.00',
     paymentLines: []
   };
+}
+
+function paymentPaneOrderTypeLabel(orderType: string) {
+  return ORDER_TYPES[orderType] || orderType || 'Unknown';
+}
+
+function paymentPaneCustomerSummary() {
+  const customer = currentCustomerLike() || {};
+  return {
+    name: String(customer.name || '').trim() || '',
+    phone: phoneDisplayValue(normalizePhone(customer.phone || '')) || ''
+  };
+}
+
+function paymentPaneOrderItems() {
+  return (state.cart || []).map((line) => {
+    const qty = Math.max(1, Number(line.qty || 1));
+    const linePrice = Math.max(0, Number(line.price || 0));
+    return {
+      id: line.lineId || '',
+      name: line.name || 'Item',
+      qty,
+      priceCents: Math.round(linePrice * 100),
+      subtitle: line.size ? String(line.size) : ''
+    };
+  });
+}
+
+function updateOrderPhoneFromPaymentPane(phoneValue: string) {
+  const normalizedPhone = normalizePhone(phoneValue || '');
+  state.customerPhone = normalizedPhone;
+  state.customerDraft.phone = normalizedPhone;
+
+  if (state.activeCustomer) {
+    state.activeCustomer = {
+      ...state.activeCustomer,
+      phone: normalizedPhone
+    };
+  }
+
+  if (state.orderType === 'pickup' || state.orderType === 'togo') {
+    state.orderTypeDetails.togoPhone = normalizedPhone;
+  }
+
+  if (state.paymentPaneInput) {
+    state.paymentPaneInput.customer = {
+      ...state.paymentPaneInput.customer,
+      phone: phoneDisplayValue(normalizedPhone) || ''
+    };
+  }
+}
+
+function seedPaymentDialogForPaneCompletion(paymentType: string, amountDue: number, totalCents: number) {
+  state.paymentDialog = {
+    open: false,
+    baseTotal: +(totalCents / 100).toFixed(2),
+    paymentType,
+    tipMode: 'none',
+    customTip: '0.00',
+    entryAmount: '0.00',
+    paymentLines: [{
+      id: uid(),
+      paymentType,
+      amount: amountDue,
+      tipAmount: 0
+    }]
+  };
+}
+
+function mockSendTextPaymentLink(phoneDigits: string): Promise<{ ok: boolean; status: TextPaymentLinkStatus; message?: string }> {
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      resolve({ ok: true, status: 'sent' });
+    }, 350);
+  });
+}
+
+function mockRemoveSavedCard(_cardId: string): Promise<{ ok: boolean; message?: string }> {
+  return new Promise((resolve) => {
+    window.setTimeout(() => resolve({ ok: true }), 300);
+  });
+}
+
+function baseMockSavedPaymentMethods(): Record<string, SavedPaymentMethodDisplay[]> {
+  return {
+    cust_001: [
+      { savedPaymentMethodId: 'pm_001_visa', customerId: 'cust_001', cardBrand: 'visa', lastFour: '4242', expirationMonth: 8, expirationYear: 2028, isDefault: true, lastUsedAt: '2026-07-10T14:23:00Z', status: 'active' },
+      { savedPaymentMethodId: 'pm_001_mc', customerId: 'cust_001', cardBrand: 'mastercard', lastFour: '5187', expirationMonth: 11, expirationYear: 2027, lastUsedAt: '2026-06-05T11:00:00Z', status: 'active' },
+      { savedPaymentMethodId: 'pm_001_amex', customerId: 'cust_001', cardBrand: 'amex', lastFour: '1005', expirationMonth: 4, expirationYear: 2029, lastUsedAt: '2026-04-01T09:30:00Z', status: 'active' }
+    ],
+    cust_002: [
+      { savedPaymentMethodId: 'pm_002_disc', customerId: 'cust_002', cardBrand: 'discover', lastFour: '6011', expirationMonth: 3, expirationYear: 2026, lastUsedAt: '2026-07-15T16:00:00Z', status: 'active' }
+    ]
+  };
+}
+
+function buildSavedPaymentMethods(customerId: string): SavedPaymentMethodDisplay[] {
+  if (!customerId) return [];
+  const allMethods = baseMockSavedPaymentMethods();
+  const cards = (allMethods[customerId] || []).filter((c) => c.status === 'active');
+  return cards.sort((a, b) => {
+    const dateA = a.lastUsedAt ? new Date(a.lastUsedAt).getTime() : 0;
+    const dateB = b.lastUsedAt ? new Date(b.lastUsedAt).getTime() : 0;
+    return dateB - dateA;
+  });
+}
+
+function buildPaymentPaneInput() {
+  const subtotalCents = Math.round(cartTotal() * 100);
+  const taxCents = Math.round(ticketTax() * 100);
+  const totalCents = Math.round(ticketGrandTotal() * 100);
+  return {
+    displayOrderNumber: OrderPersistence.buildOrderNumber(),
+    orderTypeLabel: paymentPaneOrderTypeLabel(state.orderType),
+    stationName: `Main Station`,
+    subtotalCents,
+    taxCents,
+    totalCents,
+    tipCents: 0,
+    paymentsAppliedCents: 0,
+    remainingBalanceCents: totalCents,
+    customer: paymentPaneCustomerSummary(),
+    items: paymentPaneOrderItems(),
+    orderType: state.orderType,
+    selectedMethod: 'cash' as PaymentMethod,
+    savedPaymentMethods: buildSavedPaymentMethods(state.activeCustomer?.id || ''),
+    // TODO: gate canRemoveSavedCards on manager role or merchant-level permission once the role system is wired
+    canRemoveSavedCards: state.managerUnlocked
+  };
+}
+
+function openPaymentPane() {
+  if (!window.LilposPaymentPane) return;
+  const input = buildPaymentPaneInput();
+  state.paymentPaneInput = input;
+  state.paymentPaneState = window.LilposPaymentPane.createStateFromInput(input);
+  state.mainView = MAIN_VIEWS.payment;
+}
+
+async function handlePaymentPanePrimaryAction() {
+  if (!state.paymentPaneState || !state.paymentPaneInput) return;
+  if (state.orderSendLocked || state.paymentPaneState.isSubmitting) return;
+
+  const paneState = state.paymentPaneState;
+  const isCard = paneState.selectedPaymentMethod === 'card';
+  const isCash = paneState.selectedPaymentMethod === 'cash';
+  const isTextPaymentLink = paneState.selectedPaymentMethod === 'text-payment-link';
+
+  if (!isCard && !isCash && !isTextPaymentLink) {
+    state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-error', message: 'This payment method is coming soon.' });
+    render();
+    return;
+  }
+
+  if (isTextPaymentLink) {
+    const phoneDigits = normalizePhone(paneState.textPaymentLinkPhoneDigits || state.paymentPaneInput.customer.phone || state.customerPhone);
+
+    if (paneState.textPaymentLinkStatus === 'paid') {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-submitting', submitting: true });
+      render();
+
+      const amountDue = +(paneState.remainingBalanceCents / 100).toFixed(2);
+      seedPaymentDialogForPaneCompletion('Text Payment Link', amountDue, paneState.totalCents);
+      completePayNowOrder();
+      if (!state.orderSendLocked) {
+        state.paymentPaneState = null;
+        state.paymentPaneInput = null;
+        state.mainView = MAIN_VIEWS.menu;
+      }
+      return;
+    }
+
+    if (paneState.textPaymentLinkStatus === 'sent' || paneState.textPaymentLinkStatus === 'pending') {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, {
+        type: 'set-error',
+        message: 'Payment link already sent. Wait for payment confirmation before completing the order.'
+      });
+      render();
+      return;
+    }
+
+    if (phoneDigits.length < 10) {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, {
+        type: 'set-error',
+        message: 'Enter a mobile number before texting the payment link.'
+      });
+      render();
+      return;
+    }
+
+    updateOrderPhoneFromPaymentPane(phoneDigits);
+    state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'text-link-set-status', status: 'sending' });
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'set-submitting', submitting: true });
+    render();
+
+    const result = await mockSendTextPaymentLink(phoneDigits);
+    if (!state.paymentPaneState) return;
+
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'text-link-set-status',
+      status: result.ok ? result.status : 'failed',
+      errorMessage: result.ok ? '' : (result.message || 'Unable to send payment link.')
+    });
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'set-submitting', submitting: false });
+    render();
+    return;
+  }
+
+  if (isCash && paneState.cashReceivedCents < paneState.remainingBalanceCents) {
+    state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-error', message: 'Cash received must cover remaining balance.' });
+    render();
+    return;
+  }
+
+  state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-submitting', submitting: true });
+  render();
+
+  if (isCard) {
+    // Keep provider-neutral; this is a typed placeholder until terminal hook exists.
+    const cofMsg = paneState.selectedSavedCardId
+      ? 'Card on file integration not configured yet.'
+      : 'Card terminal integration not configured yet.';
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'set-card-status', status: 'error', errorMessage: cofMsg });
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'set-submitting', submitting: false });
+    render();
+    return;
+  }
+
+  // Reuse existing payment completion pipeline for persistence, receipts, and send semantics.
+  const amountDue = +(paneState.remainingBalanceCents / 100).toFixed(2);
+  seedPaymentDialogForPaneCompletion('Cash', amountDue, paneState.totalCents);
+
+  completePayNowOrder();
+  if (!state.orderSendLocked) {
+    state.paymentPaneState = null;
+    state.paymentPaneInput = null;
+    state.mainView = MAIN_VIEWS.menu;
+  }
 }
 
 function closePaymentDialog() {
@@ -4692,7 +4946,7 @@ function sendOrderAction(paymentMode) {
       render();
       return;
     }
-    openPaymentDialog();
+    openPaymentPane();
     render();
     return;
   }
@@ -5186,6 +5440,11 @@ function hasKnownCustomerRecord(line) {
     && !!line.rawDetails?.customerId;
 }
 
+function lineHasSavedCardOnFile(line) {
+  if (!hasKnownCustomerRecord(line)) return false;
+  return buildSavedPaymentMethods(String(line.rawDetails?.customerId || '')).length > 0;
+}
+
 function lineMatchClass(line) {
   if (line.state === 'idle') return '';
   return line.matchType === 'known-customer' ? 'known' : 'unknown';
@@ -5210,6 +5469,10 @@ function customerRecordIcon() {
   return '<span class="line-customer-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"></circle><path d="M6 19c.8-3.2 3-5 6-5s5.2 1.8 6 5"></path></svg></span>';
 }
 
+function lineCardOnFileIcon() {
+  return '<span class="line-card-on-file-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M3 10h18"></path><path d="M7 15h4"></path></svg></span>';
+}
+
 function phoneLinesFooterHtml() {
   return `
     <footer class="line-footer">
@@ -5217,6 +5480,7 @@ function phoneLinesFooterHtml() {
         ${state.phoneLines.map((line) => `
           <button class="line-tile ${line.state} ${lineMatchClass(line)} ${lineRingingClass(line)}" data-line-tile="${line.lineNumber}">
             ${hasKnownCustomerRecord(line) ? customerRecordIcon() : ''}
+            ${lineHasSavedCardOnFile(line) ? lineCardOnFileIcon() : ''}
             <span class="line-title">Line ${line.lineNumber}</span>
             ${lineTileBody(line)}
           </button>
@@ -5755,9 +6019,24 @@ function renderManagerSettingsView() {
   `;
 }
 
+function renderPaymentPaneView() {
+  if (!state.paymentPaneInput || !state.paymentPaneState) {
+    return `
+      <section class="menu-board center-view">
+        <div class="empty">
+          <h2>Payment unavailable</h2>
+          <p>Open payment from an active ticket.</p>
+        </div>
+      </section>
+    `;
+  }
+  return window.LilposPaymentPane.renderPane(state.paymentPaneInput, state.paymentPaneState);
+}
+
 function renderMainAreaView(filtered) {
   if (state.mainView === MAIN_VIEWS.customers) return renderCustomerManagementView();
   if (state.mainView === MAIN_VIEWS.orders) return renderOrdersManagementView();
+  if (state.mainView === MAIN_VIEWS.payment) return renderPaymentPaneView();
   if (state.mainView === MAIN_VIEWS.managerPin) return renderManagerPinView();
   if (state.mainView === MAIN_VIEWS.managerSettings) return renderManagerSettingsView();
   return renderHomeMenuView(filtered);
@@ -6566,7 +6845,6 @@ function render() {
       ${deliveryProfileDialogHtml()}
       ${payNowMissingDialogHtml()}
       ${payLaterMissingDialogHtml()}
-      ${paymentDialogHtml()}
       ${newSaleConfirmDialogHtml()}
       ${orderNumberDialogHtml()}
       ${orderTypeDraftDialogHtml()}
@@ -7291,7 +7569,7 @@ function attachEvents() {
       render();
       return;
     }
-    openPaymentDialog();
+    openPaymentPane();
     render();
   });
   $('#cancelPayNowMissing')?.addEventListener('click', () => {
@@ -7387,6 +7665,210 @@ function attachEvents() {
   });
   $('#cancelPayLaterMissing')?.addEventListener('click', () => {
     closePayLaterMissingDialog();
+    render();
+  });
+
+  document.querySelectorAll('[data-lilpay-method]').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (!state.paymentPaneState) return;
+      const rawMethod = (b as HTMLElement).dataset.lilpayMethod || 'cash';
+      const method: PaymentMethod = ['cash', 'card', 'text-payment-link', 'split', 'gift-or-other'].includes(rawMethod)
+        ? (rawMethod as PaymentMethod)
+        : 'cash';
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'select-method',
+        method
+      });
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-key]').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (!state.paymentPaneState) return;
+      const key = (b as HTMLElement).dataset.lilpayKey || '';
+      if (key === 'backspace') {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-backspace' });
+      } else if (/^[0-9]$/.test(key)) {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-digit', digit: key });
+      }
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-quick]').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (!state.paymentPaneState) return;
+      const raw = (b as HTMLElement).dataset.lilpayQuick || '';
+      if (raw === 'exact') {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-exact' });
+      } else {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+          type: 'cash-set-amount',
+          cents: Math.max(0, Number(raw || 0))
+        });
+      }
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-text-phone="1"]').forEach((field) => {
+    const input = field as HTMLInputElement;
+    input.addEventListener('input', () => {
+      if (!state.paymentPaneState) return;
+      const normalizedPhone = syncPhoneInputMask(input);
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'text-link-set-phone',
+        value: normalizedPhone
+      });
+      updateOrderPhoneFromPaymentPane(normalizedPhone);
+    });
+
+    input.addEventListener('blur', () => {
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-text-status]').forEach((b) => {
+    b.addEventListener('click', () => {
+      if (!state.paymentPaneState) return;
+      const rawStatus = (b as HTMLElement).dataset.lilpayTextStatus || 'ready';
+      const nextStatus: TextPaymentLinkStatus = ['ready', 'sending', 'sent', 'pending', 'paid', 'failed', 'expired'].includes(rawStatus)
+        ? (rawStatus as TextPaymentLinkStatus)
+        : 'ready';
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'text-link-set-status',
+        status: nextStatus
+      });
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-back="1"]').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.mainView = MAIN_VIEWS.menu;
+      state.paymentPaneState = null;
+      state.paymentPaneInput = null;
+      render();
+    });
+  });
+
+  $('[data-lilpay-send-unpaid="1"]')?.addEventListener('click', () => {
+    state.mainView = MAIN_VIEWS.menu;
+    state.paymentPaneState = null;
+    state.paymentPaneInput = null;
+    completePayLaterOrder();
+  });
+
+  $('[data-lilpay-pay-send="1"]')?.addEventListener('click', () => {
+    if (!state.paymentPaneState) return;
+    if (state.paymentPaneState.selectedPaymentMethod === 'cash') {
+      handlePaymentPanePrimaryAction();
+      return;
+    }
+    if (state.paymentPaneState.selectedPaymentMethod === 'text-payment-link' && state.paymentPaneState.textPaymentLinkStatus === 'paid') {
+      handlePaymentPanePrimaryAction();
+      return;
+    }
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'set-error',
+      message: state.paymentPaneState.selectedPaymentMethod === 'text-payment-link'
+        ? 'Text the link first, then wait for payment confirmation before completing the order.'
+        : 'Pay & Send is available after card integration is configured.'
+    });
+    render();
+  });
+
+  $('[data-lilpay-primary-action="1"]')?.addEventListener('click', () => {
+    handlePaymentPanePrimaryAction();
+  });
+
+  $('[data-lilpay-manual-entry="1"]')?.addEventListener('click', () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'set-error',
+      message: 'Manual card entry is not wired yet.'
+    });
+    render();
+  });
+
+  $('[data-lilpay-split-payment="1"]')?.addEventListener('click', () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'set-error',
+      message: 'Split payment is coming soon.'
+    });
+    render();
+  });
+
+  $('[data-lilpay-card-retry="1"]')?.addEventListener('click', () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'set-card-status',
+      status: 'ready'
+    });
+    render();
+  });
+
+  document.querySelectorAll('[data-lilpay-cof-select]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (!state.paymentPaneState) return;
+      const rawId = (el as HTMLElement).dataset.lilpayCofSelect || '';
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'cof-select-card',
+        id: rawId || null
+      });
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-cof-initiate-remove]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!state.paymentPaneState) return;
+      const cardId = (btn as HTMLElement).dataset.lilpayCofInitiateRemove || '';
+      if (!cardId) return;
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'cof-initiate-remove',
+        id: cardId
+      });
+      render();
+    });
+  });
+
+  $('[data-lilpay-cof-cancel-remove="1"]')?.addEventListener('click', () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cof-cancel-remove' });
+    render();
+  });
+
+  $('[data-lilpay-cof-confirm-remove="1"]')?.addEventListener('click', async () => {
+    if (!state.paymentPaneState) return;
+    const cardId = state.paymentPaneState.removingCardId;
+    if (!cardId || state.paymentPaneState.isSubmitting) return;
+
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'set-submitting', submitting: true });
+    render();
+
+    const result = await mockRemoveSavedCard(cardId);
+    if (!state.paymentPaneState) return;
+
+    if (result.ok) {
+      if (state.paymentPaneInput) {
+        state.paymentPaneInput = {
+          ...state.paymentPaneInput,
+          savedPaymentMethods: (state.paymentPaneInput.savedPaymentMethods || []).filter((c) => c.savedPaymentMethodId !== cardId)
+        };
+      }
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cof-remove-success', id: cardId });
+    } else {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'cof-remove-failed',
+        id: cardId,
+        message: result.message || 'Failed to remove card. Please try again.'
+      });
+    }
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'set-submitting', submitting: false });
     render();
   });
 
