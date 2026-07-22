@@ -1,8 +1,11 @@
 /// <reference path="./payment-types.ts" />
 
 function cashPaymentPaneHtml(state: PaymentPaneState): string {
-  const insufficient = state.cashReceivedCents < state.remainingBalanceCents;
-  const quickAmounts = buildCashQuickAmounts(state.remainingBalanceCents);
+  const dueCents = state.splitProcessingAmountCents > 0
+    ? Math.max(0, Number(state.splitProcessingAmountCents || 0))
+    : state.remainingBalanceCents;
+  const insufficient = state.cashReceivedCents < dueCents;
+  const quickAmounts = buildCashQuickAmounts(dueCents);
   return `
     <section class="lilpay-center-card lilpay-cash-pane" aria-label="Cash payment controls">
       <div class="lilpay-cash-grid">
@@ -28,13 +31,13 @@ function cashPaymentPaneHtml(state: PaymentPaneState): string {
           <h3>Quick Amounts</h3>
           <div class="lilpay-quick-row" role="group" aria-label="Quick cash amounts">
             ${quickAmounts.map((cents) => `<button type="button" data-lilpay-quick="${cents}">${formatWholeDollarCents(cents)}</button>`).join('')}
-            <button type="button" data-lilpay-quick="exact">Exact</button>
+            <button type="button" class="lilpay-quick-exact" data-lilpay-quick="exact">Exact</button>
           </div>
           <div class="lilpay-divider"></div>
           <h3>Change Due</h3>
           <div class="lilpay-change-due">${formatCents(state.changeDueCents)}</div>
           <p class="lilpay-muted-note">Cash drawer will open when you complete the sale.</p>
-          ${insufficient ? `<p class="lilpay-error-note">Cash received must cover remaining balance.</p>` : ''}
+          ${insufficient ? `<p class="lilpay-error-note">Cash received must cover the selected payment amount.</p>` : ''}
         </div>
       </div>
     </section>

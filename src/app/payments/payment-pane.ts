@@ -1,9 +1,10 @@
 /// <reference path="./payment-types.ts" />
+/// <reference path="./split-payment-pane.ts" />
 
 function paymentMethodTabLabel(method: PaymentMethod): string {
   if (method === 'cash') return 'Cash';
   if (method === 'card') return 'Card';
-  if (method === 'split') return 'Split Tender';
+  if (method === 'split') return 'Split Payment';
   if (method === 'text-payment-link') return 'Text a Payment Link';
   return 'Gift Card / Other';
 }
@@ -46,6 +47,7 @@ function centerPaneHtml(input: PaymentPaneInput, state: PaymentPaneState): strin
   if (state.selectedPaymentMethod === 'cash') return cashPaymentPaneHtml(state);
   if (state.selectedPaymentMethod === 'card') return cardPaymentPaneHtml(input, state);
   if (state.selectedPaymentMethod === 'text-payment-link') return textPaymentLinkPaneHtml(state);
+  if (state.selectedPaymentMethod === 'split') return splitPaymentPaneHtml(input, state);
   return `
     <section class="lilpay-center-card lilpay-coming-soon" aria-label="Coming soon payment method">
       <h3>${paymentMethodTabLabel(state.selectedPaymentMethod)}</h3>
@@ -74,6 +76,13 @@ function methodTabsHtml(selected: PaymentMethod): string {
 }
 
 function contextualPrimaryActionLabel(input: PaymentPaneInput, state: PaymentPaneState): string {
+  if (state.selectedPaymentMethod === 'split') {
+    if (state.splitWorkspace?.remainingCents === 0) {
+      return input.paymentContextSource === 'orders-management' ? 'Complete Payment' : 'Complete & Send';
+    }
+    return 'Process Split Portion';
+  }
+
   if (state.selectedPaymentMethod === 'text-payment-link') {
     return state.textPaymentLinkStatus === 'paid' ? 'Complete Confirmed Payment' : 'Text Payment Link';
   }
@@ -88,11 +97,20 @@ function contextualPrimaryActionLabel(input: PaymentPaneInput, state: PaymentPan
     }
     return 'Charge Card on File & Complete';
   }
-  return state.selectedPaymentMethod === 'card' ? 'Charge Card & Complete' : 'Complete Cash Sale';
+  if (state.selectedPaymentMethod === 'card') return 'Charge Card & Complete';
+  if (state.selectedPaymentMethod === 'gift-or-other') return 'Complete Other Payment';
+  return 'Complete Cash Sale';
 }
 
 function primaryActionDisabled(input: PaymentPaneInput, state: PaymentPaneState): boolean {
   if (state.isSubmitting) return true;
+  if (state.selectedPaymentMethod === 'split') {
+    if (!state.splitWorkspace) return true;
+    if (state.splitWorkspace.remainingCents === 0) return false;
+    const selected = state.splitWorkspace.portions.find((portion) => portion.id === state.splitWorkspace?.selectedPortionId);
+    if (!selected) return true;
+    return !(selected.status === 'PENDING' || selected.status === 'DECLINED');
+  }
   if (state.selectedPaymentMethod === 'card' && state.removingCardId) return true;
   if (state.selectedPaymentMethod !== 'text-payment-link') return false;
   return state.textPaymentLinkStatus === 'sending'
@@ -105,6 +123,7 @@ function displayOrderMeta(input: PaymentPaneInput): string {
 }
 
 function renderPane(input: PaymentPaneInput, state: PaymentPaneState): string {
+  const splitHasBalance = state.selectedPaymentMethod === 'split' && !!state.splitWorkspace && state.splitWorkspace.remainingCents > 0;
   return `
     <div class="lilpay-pane" data-lilpay-open="1">
       <div class="lilpay-main">
@@ -127,8 +146,8 @@ function renderPane(input: PaymentPaneInput, state: PaymentPaneState): string {
 
         <footer class="lilpay-actions-row">
           <button type="button" class="lilpay-action-btn" data-lilpay-back="1">Back</button>
-          <button type="button" class="lilpay-action-btn" data-lilpay-send-unpaid="1">Send Unpaid</button>
-          <button type="button" class="lilpay-action-btn" data-lilpay-pay-send="1">Pay & Send</button>
+          ${splitHasBalance ? '' : '<button type="button" class="lilpay-action-btn" data-lilpay-send-unpaid="1">Send Unpaid</button>'}
+          ${splitHasBalance ? '' : '<button type="button" class="lilpay-action-btn" data-lilpay-pay-send="1">Pay & Send</button>'}
           <button
             type="button"
             class="lilpay-action-btn lilpay-action-primary"

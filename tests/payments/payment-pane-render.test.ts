@@ -110,4 +110,13 @@ describe('payment pane render', () => {
     expect(html).toContain('5187');
     expect(html).toContain('Mastercard');
   });
+
+  it('cash pane renders Exact button with lilpay-quick-exact class', () => {
+    const state = createStateFromInput(input);
+    // cashPaymentPaneHtml is globally available via the loaded scripts
+    const html = (window as any).cashPaymentPaneHtml ? (window as any).cashPaymentPaneHtml(state) : renderPane(input, state);
+    expect(html).toContain('lilpay-quick-exact');
+    expect(html).toContain('data-lilpay-quick="exact"');
+    expect(html).toContain('Exact');
+  });
 });

@@ -86,7 +86,7 @@
     var getFallbackCustomers = safeDeps.getFallbackCustomers || function() { return []; };
     var nowIso = safeDeps.nowIso || function() { return new Date().toISOString(); };
     var dbName = safeDeps.dbName || 'BringdatSmartRegisterMockNoNpm';
-    var dbVersion = Number.isFinite(Number(safeDeps.dbVersion)) ? Number(safeDeps.dbVersion) : 2;
+    var dbVersion = Number.isFinite(Number(safeDeps.dbVersion)) ? Number(safeDeps.dbVersion) : 3;
     var legacyOrdersKey = safeDeps.legacyOrdersKey || 'lilpos_persisted_orders';
     var getStationNumber = safeDeps.getStationNumber || function() { return 1; };
     var getMerchantId = safeDeps.getMerchantId || function() { return 'local-merchant'; };
@@ -98,6 +98,8 @@
     var STORE_ORDER_HISTORY_ITEMS = 'order_history_items';
     var STORE_ORDER_EVENTS = 'order_events';
     var STORE_PAYMENT_HISTORY = 'payment_history';
+    var STORE_SPLIT_PAYMENT_PLAN = 'split_payment_plan';
+    var STORE_SPLIT_PAYMENT_PORTION = 'split_payment_portion';
 
     var LEGACY_IMPORT_META_KEY = 'legacy_order_import_v1';
 
@@ -160,6 +162,24 @@
 
     function deterministicKey(parts: any[]): string {
       return parts.map(function(part) { return String(part == null ? '' : part); }).join('|').toLowerCase();
+    }
+
+    function ensureSplitPaymentStores(db: IDBDatabase) {
+      if (!db.objectStoreNames.contains(STORE_SPLIT_PAYMENT_PLAN)) {
+        var planStore = db.createObjectStore(STORE_SPLIT_PAYMENT_PLAN, { keyPath: 'id' });
+        planStore.createIndex('by_orderId', 'orderId', { unique: false });
+        planStore.createIndex('by_status', 'status', { unique: false });
+        planStore.createIndex('by_idempotencyKey', 'idempotencyKey', { unique: true });
+      }
+
+      if (!db.objectStoreNames.contains(STORE_SPLIT_PAYMENT_PORTION)) {
+        var portionStore = db.createObjectStore(STORE_SPLIT_PAYMENT_PORTION, { keyPath: 'id' });
+        portionStore.createIndex('by_planId', 'planId', { unique: false });
+        portionStore.createIndex('by_orderId', 'orderId', { unique: false });
+        portionStore.createIndex('by_status', 'status', { unique: false });
+        portionStore.createIndex('by_paymentId', 'paymentId', { unique: false });
+        portionStore.createIndex('by_idempotencyKey', 'idempotencyKey', { unique: true });
+      }
     }
 
     function openRuntimeDb(): Promise<IDBDatabase> {
@@ -228,6 +248,21 @@
                 });
               } catch (_err) {
                 // Keep migration non-destructive even if metadata write fails.
+              }
+            }
+          }
+
+          if (oldVersion < 3) {
+            ensureSplitPaymentStores(db);
+            if (tx && tx.objectStore && db.objectStoreNames.contains(STORE_META)) {
+              try {
+                tx.objectStore(STORE_META).put({
+                  id: 'schema_version',
+                  value: 3,
+                  migratedAt: nowIso()
+                });
+              } catch (_err) {
+                // Non-destructive migration metadata update
               }
             }
           }
@@ -1081,9 +1116,13 @@
           paymentType: String(payment && payment.paymentType || 'Other'),
           tenderLabel: String(payment && payment.tenderLabel || payment && payment.paymentType || 'Other'),
           amountCents: Number.isFinite(Number(payment && payment.amountCents)) ? Number(payment.amountCents) : toIntCents(payment && payment.amount || 0),
+          baseAmountCents: Number.isFinite(Number(payment && payment.baseAmountCents)) ? Number(payment.baseAmountCents) : (Number.isFinite(Number(payment && payment.amountCents)) ? Number(payment.amountCents) : toIntCents(payment && payment.amount || 0)),
+          tipAmountCents: Number.isFinite(Number(payment && payment.tipAmountCents)) ? Number(payment.tipAmountCents) : toIntCents(payment && payment.tipAmount || 0),
           cardBrand: String(payment && payment.cardBrand || ''),
           cardLastFour: String(payment && payment.cardLastFour || payment && payment.lastFour || '').replace(/\D/g, '').slice(-4),
           processorReferenceId: String(payment && payment.processorReferenceId || ''),
+          provider: String(payment && payment.provider || ''),
+          providerTransactionReference: String(payment && payment.providerTransactionReference || ''),
           status: String(payment && payment.status || 'approved'),
           employeeId: String(payment && payment.employeeId || ''),
           employeeShortName: String(payment && payment.employeeShortName || payment && payment.employeeInitials || payment && payment.employee || 'System'),
@@ -1232,6 +1271,165 @@
         return envelopes.slice(0, Math.max(1, max));
       },
 
+      saveSplitPaymentPlan: async function(plan: any) {
+        await ensureHistoryPersistenceReady();
+        var id = String(plan && plan.id || '').trim();
+        var orderId = String(plan && plan.orderId || '').trim();
+        if (!id) throw new Error('saveSplitPaymentPlan requires id');
+        if (!orderId) throw new Error('saveSplitPaymentPlan requires orderId');
+
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_SPLIT_PAYMENT_PLAN, 'readwrite');
+        var store = tx.objectStore(STORE_SPLIT_PAYMENT_PLAN);
+        var idempotencyKey = String(plan && plan.idempotencyKey || deterministicKey(['split-plan', id, orderId]));
+        var existing = await requestResult(store.index('by_idempotencyKey').get(idempotencyKey));
+
+        var record = existing || {
+          id: id,
+          createdAt: String(plan && plan.createdAt || nowIso())
+        };
+
+        record.orderId = orderId;
+        record.historyId = String(plan && plan.historyId || '');
+        record.mode = String(plan && plan.mode || 'CUSTOM');
+        record.originalBalanceCents = Number(plan && plan.originalBalanceCents || 0);
+        record.paidCents = Number(plan && plan.paidCents || 0);
+        record.remainingCents = Number(plan && plan.remainingCents || 0);
+        record.requestedPaymentCount = Number(plan && plan.requestedPaymentCount || 0);
+        record.status = String(plan && plan.status || 'ACTIVE');
+        record.employeeId = String(plan && plan.employeeId || '');
+        record.stationId = String(plan && plan.stationId || getStationNumber() || 1);
+        record.syncStatus = String(plan && plan.syncStatus || (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only'));
+        record.idempotencyKey = idempotencyKey;
+        record.updatedAt = String(plan && plan.updatedAt || nowIso());
+
+        store.put(record);
+        await txDone(tx);
+        return record;
+      },
+
+      getSplitPaymentPlanByOrderId: async function(orderId: string) {
+        await ensureHistoryPersistenceReady();
+        var rows = await listStoreAll(STORE_SPLIT_PAYMENT_PLAN, 'by_orderId', orderId);
+        rows.sort(function(a: any, b: any) {
+          return new Date(b && b.updatedAt || b && b.createdAt || 0).getTime() - new Date(a && a.updatedAt || a && a.createdAt || 0).getTime();
+        });
+        return rows[0] || null;
+      },
+
+      saveSplitPaymentPortion: async function(portion: any) {
+        await ensureHistoryPersistenceReady();
+        var id = String(portion && portion.id || '').trim();
+        if (!id) throw new Error('saveSplitPaymentPortion requires id');
+        var planId = String(portion && portion.planId || '').trim();
+        var orderId = String(portion && portion.orderId || '').trim();
+        if (!planId) throw new Error('saveSplitPaymentPortion requires planId');
+        if (!orderId) throw new Error('saveSplitPaymentPortion requires orderId');
+
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_SPLIT_PAYMENT_PORTION, 'readwrite');
+        var store = tx.objectStore(STORE_SPLIT_PAYMENT_PORTION);
+        var idempotencyKey = String(portion && portion.idempotencyKey || deterministicKey(['split-portion', id, planId, orderId]));
+        var existing = await requestResult(store.index('by_idempotencyKey').get(idempotencyKey));
+        var record = existing || {
+          id: id,
+          createdAt: String(portion && portion.createdAt || nowIso())
+        };
+
+        record.planId = planId;
+        record.orderId = orderId;
+        record.sequence = Number(portion && portion.sequence || 0);
+        record.paymentMethod = String(portion && portion.paymentMethod || 'other');
+        record.plannedAmountCents = Number(portion && portion.plannedAmountCents || 0);
+        record.approvedAmountCents = Number(portion && portion.approvedAmountCents || 0);
+        record.tipAmountCents = Number(portion && portion.tipAmountCents || 0);
+        record.status = String(portion && portion.status || 'PENDING');
+        record.paymentId = String(portion && portion.paymentId || '');
+        record.provider = String(portion && portion.provider || '');
+        record.providerTransactionReference = String(portion && portion.providerTransactionReference || '');
+        record.cardBrand = String(portion && portion.cardBrand || '');
+        record.cardLast4 = String(portion && portion.cardLast4 || '').replace(/\D/g, '').slice(-4);
+        record.failureCode = String(portion && portion.failureCode || '');
+        record.failureMessage = String(portion && portion.failureMessage || '');
+        record.syncStatus = String(portion && portion.syncStatus || (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only'));
+        record.idempotencyKey = idempotencyKey;
+        record.updatedAt = String(portion && portion.updatedAt || nowIso());
+
+        store.put(record);
+        await txDone(tx);
+        return record;
+      },
+
+      listSplitPaymentPortionsByPlanId: async function(planId: string) {
+        await ensureHistoryPersistenceReady();
+        var rows = await listStoreAll(STORE_SPLIT_PAYMENT_PORTION, 'by_planId', planId);
+        rows.sort(function(a: any, b: any) {
+          return Number(a && a.sequence || 0) - Number(b && b.sequence || 0);
+        });
+        return rows;
+      },
+
+      loadSplitPaymentWorkspaceByOrderId: async function(orderId: string) {
+        var plan = await this.getSplitPaymentPlanByOrderId(orderId);
+        if (!plan) return null;
+        var portions = await this.listSplitPaymentPortionsByPlanId(plan.id);
+        return {
+          plan: plan,
+          portions: portions
+        };
+      },
+
+      persistSplitPaymentWorkspace: async function(workspace: any) {
+        if (!workspace) return null;
+        var planRecord = await this.saveSplitPaymentPlan({
+          id: workspace.planId,
+          orderId: workspace.orderId,
+          historyId: workspace.historyId,
+          mode: workspace.mode,
+          originalBalanceCents: workspace.originalBalanceCents,
+          paidCents: workspace.paidCents,
+          remainingCents: workspace.remainingCents,
+          requestedPaymentCount: workspace.requestedPaymentCount,
+          status: workspace.status,
+          createdAt: workspace.createdAt,
+          updatedAt: workspace.updatedAt,
+          idempotencyKey: workspace.idempotencyKey,
+          syncStatus: workspace.syncStatus
+        });
+
+        var portions = Array.isArray(workspace.portions) ? workspace.portions : [];
+        for (var idx = 0; idx < portions.length; idx += 1) {
+          var portion = portions[idx] || {};
+          await this.saveSplitPaymentPortion({
+            id: portion.id,
+            planId: workspace.planId,
+            orderId: workspace.orderId,
+            sequence: portion.sequence,
+            paymentMethod: portion.paymentMethod,
+            plannedAmountCents: portion.plannedAmountCents,
+            approvedAmountCents: portion.approvedAmountCents,
+            tipAmountCents: portion.tipAmountCents,
+            status: portion.status,
+            paymentId: portion.paymentId,
+            provider: portion.provider,
+            providerTransactionReference: portion.providerTransactionReference,
+            cardBrand: portion.cardBrand,
+            cardLast4: portion.cardLast4,
+            failureCode: portion.failureCode,
+            failureMessage: portion.failureMessage,
+            createdAt: portion.createdAt,
+            updatedAt: portion.updatedAt,
+            idempotencyKey: portion.idempotencyKey,
+            syncStatus: portion.syncStatus
+          });
+        }
+
+        return {
+          plan: planRecord,
+          portions: portions
+        };
+      },
+
       listHistoricalOrdersCompat: async function() {
         var rows = await this.listOrderHistory();
         return rows.map(function(row: any) {
@@ -1328,8 +1526,12 @@
             return {
               paymentType: payment.paymentType,
               amount: fromIntCents(payment.amountCents),
+              baseAmount: fromIntCents(payment.baseAmountCents),
+              tipAmount: fromIntCents(payment.tipAmountCents),
               cardBrand: payment.cardBrand,
               lastFour: payment.cardLastFour,
+              provider: payment.provider,
+              providerTransactionReference: payment.providerTransactionReference,
               paymentId: payment.paymentId,
               paidAt: payment.paidAt
             };
@@ -1373,7 +1575,7 @@
         return {
           dbName: dbName,
           dbVersion: dbVersion,
-          stores: [STORE_KV, STORE_META, STORE_ORDER_HISTORY, STORE_ORDER_HISTORY_ITEMS, STORE_ORDER_EVENTS, STORE_PAYMENT_HISTORY],
+          stores: [STORE_KV, STORE_META, STORE_ORDER_HISTORY, STORE_ORDER_HISTORY_ITEMS, STORE_ORDER_EVENTS, STORE_PAYMENT_HISTORY, STORE_SPLIT_PAYMENT_PLAN, STORE_SPLIT_PAYMENT_PORTION],
           legacyOrdersKey: legacyOrdersKey,
           migrationMetaKey: LEGACY_IMPORT_META_KEY
         };

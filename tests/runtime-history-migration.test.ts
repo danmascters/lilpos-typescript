@@ -100,7 +100,7 @@ function createService() {
   const createLilposDataService = (window as any).LilposRuntime.createLilposDataService;
   return createLilposDataService({
     dbName: activeTestDbName,
-    dbVersion: 2,
+    dbVersion: 3,
     nowIso: () => '2026-07-19T16:00:00.000Z',
     getStationNumber: () => 1,
     getMerchantId: () => 'merchant_test',
@@ -144,7 +144,7 @@ describe('Runtime history migration v1 -> v2', () => {
     await deleteDb(activeTestDbName);
   });
 
-  it('preserves existing v1 kv data and creates v2 stores', async () => {
+  it('preserves existing v1 kv data and creates v3 stores', async () => {
     const menuSnapshot = { runtimeKind: 'lilpos-runtime-package-v1', packageVersion: 123 };
     await seedV1KvDatabase(activeTestDbName, 'activeMenu', menuSnapshot);
 
@@ -155,7 +155,7 @@ describe('Runtime history migration v1 -> v2', () => {
     expect(cachedMenu).toEqual(menuSnapshot);
 
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open(activeTestDbName, 2);
+      const req = indexedDB.open(activeTestDbName, 3);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
@@ -166,7 +166,9 @@ describe('Runtime history migration v1 -> v2', () => {
       'order_history',
       'order_history_items',
       'order_events',
-      'payment_history'
+      'payment_history',
+      'split_payment_plan',
+      'split_payment_portion'
     ];
     expectedStores.forEach((store) => {
       expect(db.objectStoreNames.contains(store)).toBe(true);
@@ -370,5 +372,75 @@ describe('Runtime history migration v1 -> v2', () => {
     expect(payments[0].cardLastFour).toBe('4242');
     expect(compat.orderId || compat.id).toBe('order_new_1');
     expect(compat.lines.length).toBe(1);
+  });
+
+  it('persists and reloads split payment plans and portions', async () => {
+    const service = createService();
+    await service.ensureHistoryPersistenceReady();
+
+    await service.persistSplitPaymentWorkspace({
+      planId: 'split_plan_1',
+      orderId: 'order_split_1',
+      historyId: 'hist_split_1',
+      mode: 'CUSTOM',
+      originalBalanceCents: 8750,
+      paidCents: 5000,
+      remainingCents: 3750,
+      requestedPaymentCount: 4,
+      status: 'ACTIVE',
+      createdAt: '2026-07-19T16:10:00.000Z',
+      updatedAt: '2026-07-19T16:11:00.000Z',
+      idempotencyKey: 'split_plan_key_1',
+      syncStatus: 'pending',
+      portions: [
+        {
+          id: 'split_portion_1',
+          sequence: 1,
+          paymentMethod: 'cash',
+          plannedAmountCents: 2000,
+          approvedAmountCents: 2000,
+          tipAmountCents: 0,
+          status: 'APPROVED',
+          paymentId: 'pay_1',
+          provider: '',
+          providerTransactionReference: '',
+          cardBrand: '',
+          cardLast4: '',
+          failureCode: '',
+          failureMessage: '',
+          idempotencyKey: 'split_portion_key_1',
+          syncStatus: 'pending',
+          createdAt: '2026-07-19T16:10:00.000Z',
+          updatedAt: '2026-07-19T16:10:00.000Z'
+        },
+        {
+          id: 'split_portion_2',
+          sequence: 2,
+          paymentMethod: 'card',
+          plannedAmountCents: 3000,
+          approvedAmountCents: 3000,
+          tipAmountCents: 500,
+          status: 'APPROVED',
+          paymentId: 'pay_2',
+          provider: 'mock-terminal',
+          providerTransactionReference: 'txn_2',
+          cardBrand: 'visa',
+          cardLast4: '4242',
+          failureCode: '',
+          failureMessage: '',
+          idempotencyKey: 'split_portion_key_2',
+          syncStatus: 'pending',
+          createdAt: '2026-07-19T16:10:30.000Z',
+          updatedAt: '2026-07-19T16:10:30.000Z'
+        }
+      ]
+    });
+
+    const loaded = await service.loadSplitPaymentWorkspaceByOrderId('order_split_1');
+    expect(loaded).not.toBeNull();
+    expect(loaded.plan.id).toBe('split_plan_1');
+    expect(loaded.plan.remainingCents).toBe(3750);
+    expect(loaded.portions.length).toBe(2);
+    expect(loaded.portions[1].cardLast4).toBe('4242');
   });
 });

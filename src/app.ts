@@ -540,12 +540,17 @@ const state: any = {
   },
   paymentPaneInput: null,
   paymentPaneState: null,
+  orderPaymentContext: null,
   orderSendLocked: false,
   orderNumberDialog: {
     open: false,
     orderNumber: '',
-    orderId: null
+    orderId: null,
+    totalCents: 0,
+    changeDueCents: 0,
+    source: 'new-sale' as 'new-sale' | 'orders-management'
   },
+  focusOrderTypeDraftNameOnRender: false,
   newSalePendingLineNumber: null
 };
 
@@ -2121,12 +2126,18 @@ function closeOrderNumberDialog() {
   state.orderNumberDialog.open = false;
   state.orderNumberDialog.orderNumber = '';
   state.orderNumberDialog.orderId = null;
+  state.orderNumberDialog.totalCents = 0;
+  state.orderNumberDialog.changeDueCents = 0;
+  state.orderNumberDialog.source = 'new-sale';
 }
 
-function openOrderNumberDialog(orderNumber, orderId) {
+function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number; changeDueCents?: number; source?: 'new-sale' | 'orders-management' } = {}) {
   state.orderNumberDialog.open = true;
   state.orderNumberDialog.orderNumber = orderNumber || '';
   state.orderNumberDialog.orderId = orderId || null;
+  state.orderNumberDialog.totalCents = Number(opts.totalCents || 0);
+  state.orderNumberDialog.changeDueCents = Number(opts.changeDueCents || 0);
+  state.orderNumberDialog.source = opts.source || 'new-sale';
 }
 
 async function printOrderNumberReceipt(kind) {
@@ -2335,32 +2346,268 @@ function buildPaymentPaneInput() {
     selectedMethod: 'cash' as PaymentMethod,
     savedPaymentMethods: buildSavedPaymentMethods(state.activeCustomer?.id || ''),
     // TODO: gate canRemoveSavedCards on manager role or merchant-level permission once the role system is wired
-    canRemoveSavedCards: state.managerUnlocked
+    canRemoveSavedCards: state.managerUnlocked,
+    paymentContextSource: 'active-ticket' as const
   };
+}
+
+function splitPaymentStateHelpers() {
+  return window.LilposSplitPaymentState || null;
+}
+
+function splitPaymentMathHelpers() {
+  return window.LilposSplitPaymentMath || null;
+}
+
+function splitPaymentMethodToPaneMethod(method: SplitPortionPaymentMethod): PaymentMethod {
+  if (method === 'cash') return 'cash';
+  if (method === 'card') return 'card';
+  return 'gift-or-other';
+}
+
+function paneMethodToSplitPaymentMethod(method: PaymentMethod): SplitPortionPaymentMethod {
+  if (method === 'cash') return 'cash';
+  if (method === 'card') return 'card';
+  return 'other';
+}
+
+function splitWorkspaceFromPaneState(): SplitPaymentWorkspace | null {
+  return state.paymentPaneState?.splitWorkspace || null;
+}
+
+function splitSelectedProcessingPortion(): SplitPaymentPortionRuntime | null {
+  const workspace = splitWorkspaceFromPaneState();
+  if (!workspace) return null;
+  const processingId = state.paymentPaneState?.splitProcessingPortionId;
+  if (!processingId) return null;
+  return workspace.portions.find((portion) => portion.id === processingId) || null;
+}
+
+function splitApprovedPaymentLinesForDialog(workspace: SplitPaymentWorkspace) {
+  if (!workspace) return [];
+  return (workspace.portions || [])
+    .filter((portion) => portion.status === 'APPROVED' && Number(portion.approvedAmountCents || 0) > 0)
+    .map((portion) => ({
+      id: portion.id,
+      paymentType: portion.paymentMethod === 'cash'
+        ? 'Cash'
+        : portion.paymentMethod === 'card'
+        ? (portion.cardBrand && portion.cardLast4 ? `${portion.cardBrand} •••• ${portion.cardLast4}` : 'Credit/Debit Card')
+        : 'Other Payment',
+      amount: +(Number(portion.approvedAmountCents || 0) / 100).toFixed(2),
+      tipAmount: +(Number(portion.tipAmountCents || 0) / 100).toFixed(2)
+    }));
+}
+
+function splitPlanOrderIdFromInput(input: PaymentPaneInput | null): string {
+  if (!input) return '';
+  return String(input.paymentContextOrderId || input.displayOrderNumber || '').trim();
+}
+
+async function persistSplitWorkspaceFromPaneState() {
+  const workspace = splitWorkspaceFromPaneState();
+  const input = state.paymentPaneInput;
+  if (!workspace || !input || !lilposDataService?.persistSplitPaymentWorkspace) return;
+  const orderId = splitPlanOrderIdFromInput(input);
+  if (!orderId) return;
+
+  const payload = {
+    ...workspace,
+    orderId,
+    historyId: String(input.paymentContextHistoryId || workspace.historyId || '')
+  };
+
+  try {
+    await lilposDataService.persistSplitPaymentWorkspace(payload);
+  } catch (err) {
+    console.error('Unable to persist split payment workspace:', err);
+  }
+}
+
+function applyRecoveredSplitWorkspaceToPane(planPayload: any, portionsPayload: any[]) {
+  const splitState = splitPaymentStateHelpers();
+  const splitMath = splitPaymentMathHelpers();
+  if (!splitState || !splitMath || !state.paymentPaneState) return;
+
+  const portions = (Array.isArray(portionsPayload) ? portionsPayload : []).map((portion) => ({
+    id: String(portion.id || ''),
+    sequence: Number(portion.sequence || 0),
+    paymentMethod: String(portion.paymentMethod || 'other') as SplitPortionPaymentMethod,
+    plannedAmountCents: Number(portion.plannedAmountCents || 0),
+    approvedAmountCents: Number(portion.approvedAmountCents || 0),
+    tipAmountCents: Number(portion.tipAmountCents || 0),
+    status: String(portion.status || 'PENDING') as SplitPaymentPortionStatus,
+    paymentId: String(portion.paymentId || ''),
+    provider: String(portion.provider || ''),
+    providerTransactionReference: String(portion.providerTransactionReference || ''),
+    cardBrand: String(portion.cardBrand || ''),
+    cardLast4: String(portion.cardLast4 || ''),
+    failureCode: String(portion.failureCode || ''),
+    failureMessage: String(portion.failureMessage || ''),
+    idempotencyKey: String(portion.idempotencyKey || ''),
+    syncStatus: String(portion.syncStatus || 'local-only'),
+    createdAt: String(portion.createdAt || nowIso()),
+    updatedAt: String(portion.updatedAt || nowIso())
+  }));
+
+  const workspace: SplitPaymentWorkspace = {
+    planId: String(planPayload?.id || `split_plan_${Date.now()}`),
+    orderId: String(planPayload?.orderId || splitPlanOrderIdFromInput(state.paymentPaneInput)),
+    historyId: String(planPayload?.historyId || ''),
+    mode: (String(planPayload?.mode || 'CUSTOM') === 'EVEN' ? 'EVEN' : 'CUSTOM'),
+    status: (String(planPayload?.status || 'ACTIVE') as SplitPaymentPlanStatus),
+    originalBalanceCents: Number(planPayload?.originalBalanceCents || state.paymentPaneState.remainingBalanceCents || 0),
+    paidCents: Number(planPayload?.paidCents || 0),
+    remainingCents: Number(planPayload?.remainingCents || 0),
+    requestedPaymentCount: Number(planPayload?.requestedPaymentCount || 2),
+    selectedPortionId: null,
+    amountEditorCents: Number(planPayload?.remainingCents || 0),
+    portions,
+    createdAt: String(planPayload?.createdAt || nowIso()),
+    updatedAt: String(planPayload?.updatedAt || nowIso()),
+    idempotencyKey: String(planPayload?.idempotencyKey || `split-plan-${Date.now()}`),
+    syncStatus: String(planPayload?.syncStatus || 'local-only')
+  };
+
+  const recomputed = splitState.splitEnsurePendingPortion(splitState.splitRecomputeWorkspace(workspace));
+  state.paymentPaneState.splitWorkspace = recomputed;
+  state.paymentPaneState.paymentsAppliedCents = splitMath.splitPaidSoFarCents(recomputed.portions);
+  state.paymentPaneState.remainingBalanceCents = splitMath.splitRemainingCents(recomputed.originalBalanceCents, recomputed.portions);
+}
+
+async function restoreSplitWorkspaceForCurrentPane() {
+  if (!state.paymentPaneInput || !state.paymentPaneState || !lilposDataService?.loadSplitPaymentWorkspaceByOrderId) return;
+  const orderId = splitPlanOrderIdFromInput(state.paymentPaneInput);
+  if (!orderId) return;
+  try {
+    const existing = await lilposDataService.loadSplitPaymentWorkspaceByOrderId(orderId);
+    if (!existing?.plan) return;
+    const planStatus = String(existing.plan.status || 'ACTIVE').toUpperCase();
+    if (planStatus !== 'ACTIVE') return;
+    applyRecoveredSplitWorkspaceToPane(existing.plan, existing.portions || []);
+    render();
+  } catch (err) {
+    console.error('Unable to restore split workspace:', err);
+  }
+}
+
+function openSplitPortionTender(portionId: string) {
+  if (!state.paymentPaneState || !state.paymentPaneInput) return;
+  const workspace = splitWorkspaceFromPaneState();
+  if (!workspace) return;
+  const portion = workspace.portions.find((entry) => entry.id === portionId);
+  if (!portion) return;
+
+  state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+    type: 'split-mark-processing',
+    portionId
+  });
+  state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+    type: 'select-method',
+    method: splitPaymentMethodToPaneMethod(portion.paymentMethod)
+  });
+
+  if (portion.paymentMethod === 'cash') {
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'cash-set-amount',
+      cents: Math.max(0, Number(portion.plannedAmountCents || 0))
+    });
+  }
+
+  render();
 }
 
 function openPaymentPane() {
   if (!window.LilposPaymentPane) return;
+  state.orderPaymentContext = null;
   const input = buildPaymentPaneInput();
   state.paymentPaneInput = input;
   state.paymentPaneState = window.LilposPaymentPane.createStateFromInput(input);
   state.mainView = MAIN_VIEWS.payment;
+  restoreSplitWorkspaceForCurrentPane();
 }
 
 async function handlePaymentPanePrimaryAction() {
   if (!state.paymentPaneState || !state.paymentPaneInput) return;
   if (state.orderSendLocked || state.paymentPaneState.isSubmitting) return;
 
+  const paneInput = state.paymentPaneInput;
   const paneState = state.paymentPaneState;
+  const isOrderContext = state.orderPaymentContext?.source === 'orders-management';
+  const splitWorkspace = splitWorkspaceFromPaneState();
+  const splitPortion = splitSelectedProcessingPortion();
+
+  if (paneState.selectedPaymentMethod === 'split') {
+    if (!splitWorkspace) {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-error', message: 'Split workspace is unavailable.' });
+      render();
+      return;
+    }
+
+    if (splitWorkspace.remainingCents > 0) {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, {
+        type: 'set-error',
+        message: 'Select and process a pending payment portion.'
+      });
+      render();
+      return;
+    }
+
+    if (isOrderContext) {
+      const workspace = splitWorkspaceFromPaneState();
+      if (workspace && workspace.remainingCents === 0) {
+        const orderTotalCents = Math.max(0, Number(state.paymentPaneInput?.totalCents || state.paymentPaneInput?.remainingBalanceCents || 0));
+        const orderId = splitPlanOrderIdFromInput(state.paymentPaneInput);
+        const orderNumber = String(state.paymentPaneInput?.displayOrderNumber || '');
+        closePaymentPaneToSource();
+        openOrderNumberDialog(orderNumber, orderId, {
+          totalCents: orderTotalCents,
+          changeDueCents: 0,
+          source: 'orders-management'
+        });
+      } else {
+        closePaymentPaneToSource();
+      }
+      render();
+      return;
+    }
+
+    const lines = splitApprovedPaymentLinesForDialog(splitWorkspace);
+    if (!lines.length) {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-error', message: 'No approved split payments were found.' });
+      render();
+      return;
+    }
+
+    const tipTotal = lines.reduce((sum, line) => sum + Number(line.tipAmount || 0), 0);
+    state.paymentDialog = {
+      open: false,
+      baseTotal: +(paneState.totalCents / 100).toFixed(2),
+      paymentType: 'Split Payment',
+      tipMode: tipTotal > 0 ? 'custom' : 'none',
+      customTip: tipTotal.toFixed(2),
+      entryAmount: '0.00',
+      paymentLines: lines
+    };
+    await persistSplitWorkspaceFromPaneState();
+    completePayNowOrder();
+    return;
+  }
+
   const isCard = paneState.selectedPaymentMethod === 'card';
   const isCash = paneState.selectedPaymentMethod === 'cash';
   const isTextPaymentLink = paneState.selectedPaymentMethod === 'text-payment-link';
+  const isOtherMethod = paneState.selectedPaymentMethod === 'gift-or-other';
 
-  if (!isCard && !isCash && !isTextPaymentLink) {
+  if (!isCard && !isCash && !isTextPaymentLink && !isOtherMethod) {
     state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-error', message: 'This payment method is coming soon.' });
     render();
     return;
   }
+
+  const requiredCents = splitPortion
+    ? Math.max(0, Number(splitPortion.plannedAmountCents || 0))
+    : Math.max(0, Number(paneState.remainingBalanceCents || 0));
 
   if (isTextPaymentLink) {
     const phoneDigits = normalizePhone(paneState.textPaymentLinkPhoneDigits || state.paymentPaneInput.customer.phone || state.customerPhone);
@@ -2368,6 +2615,39 @@ async function handlePaymentPanePrimaryAction() {
     if (paneState.textPaymentLinkStatus === 'paid') {
       state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-submitting', submitting: true });
       render();
+
+      if (splitPortion) {
+        if (isOrderContext) {
+          await completeSelectedOrderPaymentFromPane({
+            paymentType: 'Text Payment Link',
+            amountCents: requiredCents
+          }, { closeAfter: false });
+        }
+
+        if (state.paymentPaneState) {
+          state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+            type: 'split-mark-approved',
+            portionId: splitPortion.id,
+            approvedAmountCents: requiredCents,
+            tipAmountCents: 0,
+            paymentId: `split_pay_${uid()}`
+          });
+          state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'split-clear-processing' });
+          state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'select-method', method: 'split' });
+          await persistSplitWorkspaceFromPaneState();
+        }
+        render();
+        return;
+      }
+
+      if (isOrderContext) {
+        await completeSelectedOrderPaymentFromPane({
+          paymentType: 'Text Payment Link',
+          amountCents: paneState.remainingBalanceCents
+        });
+        render();
+        return;
+      }
 
       const amountDue = +(paneState.remainingBalanceCents / 100).toFixed(2);
       seedPaymentDialogForPaneCompletion('Text Payment Link', amountDue, paneState.totalCents);
@@ -2416,8 +2696,13 @@ async function handlePaymentPanePrimaryAction() {
     return;
   }
 
-  if (isCash && paneState.cashReceivedCents < paneState.remainingBalanceCents) {
-    state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-error', message: 'Cash received must cover remaining balance.' });
+  if (isCash && paneState.cashReceivedCents < requiredCents) {
+    state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, {
+      type: 'set-error',
+      message: splitPortion
+        ? 'Cash received must cover the selected split portion.'
+        : 'Cash received must cover remaining balance.'
+    });
     render();
     return;
   }
@@ -2425,8 +2710,77 @@ async function handlePaymentPanePrimaryAction() {
   state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-submitting', submitting: true });
   render();
 
+  if (splitPortion) {
+    if (isCard && paneState.cardStatus === 'declined') {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-mark-declined',
+        portionId: splitPortion.id,
+        failureCode: 'DECLINED',
+        failureMessage: 'Payment declined'
+      });
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'split-clear-processing' });
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'select-method', method: 'split' });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+      return;
+    }
+
+    let paymentType = 'Other Payment';
+    let cardBrand = '';
+    let cardLast4 = '';
+    let tipAmountCents = 0;
+
+    if (isCash) {
+      paymentType = 'Cash';
+    } else if (isCard) {
+      const selectedCard = (paneInput.savedPaymentMethods || []).find((entry) => entry.savedPaymentMethodId === paneState.selectedSavedCardId) || null;
+      paymentType = selectedCard ? 'Card on File' : 'Credit/Debit Card';
+      cardBrand = selectedCard?.cardBrand || 'card';
+      cardLast4 = selectedCard?.lastFour || '';
+    }
+
+    if (isOrderContext) {
+      await completeSelectedOrderPaymentFromPane({
+        paymentType,
+        amountCents: requiredCents,
+        cardBrand,
+        lastFour: cardLast4,
+        tipAmountCents
+      }, { closeAfter: false });
+    }
+
+    if (state.paymentPaneState) {
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-mark-approved',
+        portionId: splitPortion.id,
+        approvedAmountCents: requiredCents,
+        tipAmountCents,
+        paymentId: `split_pay_${uid()}`,
+        provider: isCard ? 'mock-terminal' : '',
+        providerTransactionReference: isCard ? `txn_${uid()}` : '',
+        cardBrand,
+        cardLast4
+      });
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'split-clear-processing' });
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'select-method', method: 'split' });
+      await persistSplitWorkspaceFromPaneState();
+    }
+    render();
+    return;
+  }
+
   if (isCard) {
-    // Keep provider-neutral; this is a typed placeholder until terminal hook exists.
+    if (isOrderContext) {
+      const selectedCard = (paneInput.savedPaymentMethods || []).find((entry) => entry.savedPaymentMethodId === paneState.selectedSavedCardId) || null;
+      await completeSelectedOrderPaymentFromPane({
+        paymentType: selectedCard ? 'Card on File' : 'Credit/Debit Card',
+        amountCents: paneState.remainingBalanceCents,
+        cardBrand: selectedCard?.cardBrand || '',
+        lastFour: selectedCard?.lastFour || ''
+      });
+      render();
+      return;
+    }
     const cofMsg = paneState.selectedSavedCardId
       ? 'Card on file integration not configured yet.'
       : 'Card terminal integration not configured yet.';
@@ -2436,10 +2790,28 @@ async function handlePaymentPanePrimaryAction() {
     return;
   }
 
-  // Reuse existing payment completion pipeline for persistence, receipts, and send semantics.
-  const amountDue = +(paneState.remainingBalanceCents / 100).toFixed(2);
-  seedPaymentDialogForPaneCompletion('Cash', amountDue, paneState.totalCents);
+  if (isOrderContext && isOtherMethod) {
+    await completeSelectedOrderPaymentFromPane({
+      paymentType: 'Other Payment',
+      amountCents: paneState.remainingBalanceCents
+    });
+    render();
+    return;
+  }
 
+  const amountDue = +(paneState.remainingBalanceCents / 100).toFixed(2);
+  if (isOrderContext) {
+    await completeSelectedOrderPaymentFromPane({
+      paymentType: 'Cash',
+      amountCents: paneState.remainingBalanceCents
+    });
+    render();
+    return;
+  }
+
+  // Pass the actual cash tendered so paymentTotals() can compute the correct change due.
+  const cashTendered = +(paneState.cashReceivedCents / 100).toFixed(2);
+  seedPaymentDialogForPaneCompletion('Cash', cashTendered, paneState.totalCents);
   completePayNowOrder();
   if (!state.orderSendLocked) {
     state.paymentPaneState = null;
@@ -2509,6 +2881,9 @@ function resetTicketAfterPayment() {
   state.focusCustomerEntryOnRender = false;
   state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
   state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
+  state.paymentPaneInput = null;
+  state.paymentPaneState = null;
+  state.orderPaymentContext = null;
   resetOrderClassifiers();
 }
 
@@ -2571,6 +2946,9 @@ function resetForNewSale() {
   state.focusCustomerEntryOnRender = false;
   state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
   state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
+  state.paymentPaneInput = null;
+  state.paymentPaneState = null;
+  state.orderPaymentContext = null;
   resetOrderClassifiers();
 }
 
@@ -2748,11 +3126,11 @@ async function completePayNowOrder() {
   closePaymentDialog();
   closePayNowMissingDialog();
   resetTicketAfterPayment();
-  if (payload.orderType === 'togo' || payload.orderType === 'tostay') {
-    openOrderNumberDialog(orderNumber, persistedOrder.id);
-  } else {
-    alert(JSON.stringify(payload, null, 2).slice(0, 4000));
-  }
+  openOrderNumberDialog(orderNumber, persistedOrder.id, {
+    totalCents: Math.round(totals.amountDue * 100),
+    changeDueCents: Math.round(totals.changeDue * 100),
+    source: 'new-sale'
+  });
   state.orderSendLocked = false;
   render();
 }
@@ -3228,6 +3606,7 @@ function closeOrderTypeDraftDialog() {
     phone: '',
     tableNumber: ''
   };
+  state.focusOrderTypeDraftNameOnRender = false;
 }
 
 function openOrderTypeDraftDialog(type: 'togo' | 'dinein') {
@@ -3247,6 +3626,11 @@ function openOrderTypeDraftDialog(type: 'togo' | 'dinein') {
     phone: seed.phone || '',
     tableNumber: seed.tableNumber || ''
   };
+
+  if (type === 'togo') {
+    state.focusOrderTypeDraftNameOnRender = true;
+    keyboardController.setKeyboardMode('micro', { persist: false });
+  }
 }
 
 function commitOrderType(nextType) {
@@ -3313,6 +3697,7 @@ function startTogoFromDraftDialog() {
   const nextPhone = normalizePhone(draft.phone || '');
   state.orderTypeDetails.togoName = nextName;
   state.orderTypeDetails.togoPhone = nextPhone;
+  keyboardController.hideKeyboard();
   closeOrderTypeDraftDialog();
   commitOrderType('togo');
 }
@@ -3320,6 +3705,7 @@ function startTogoFromDraftDialog() {
 function startDineInFromDraftDialog() {
   const draft = state.orderTypeDraftDialog;
   state.orderTypeDetails.dineInTableNumber = String(draft.tableNumber || '').trim();
+  keyboardController.hideKeyboard();
   closeOrderTypeDraftDialog();
   commitOrderType('dinein');
 }
@@ -4418,29 +4804,247 @@ function paymentTypeDisplayLabel(typeLabel) {
   const normalized = String(typeLabel || '').toLowerCase();
   if (normalized.includes('cash')) return 'Cash';
   if (normalized.includes('gift')) return 'Gift Card';
-  if (normalized.includes('split')) return 'Split Tender';
+  if (normalized.includes('split')) return 'Split Payment';
   if (normalized.includes('text') || normalized.includes('link') || normalized.includes('phone')) return 'Text Payment Link';
   if (normalized.includes('card') || normalized.includes('credit') || normalized.includes('debit') || normalized.includes('visa') || normalized.includes('mastercard') || normalized.includes('amex') || normalized.includes('discover')) return 'Credit/Debit Card';
   return typeLabel ? String(typeLabel) : 'Other tender';
 }
 
-function previousOrderPaymentSummaryHtml(order) {
-  const status = String(order?.status || '').toLowerCase();
-  const isClosedOrCompleted = status === 'completed' || status === 'closed';
-  if (!isClosedOrCompleted || !order?.paid) return '';
+function orderPaymentHelpers() {
+  return window.LilposOrderPaymentContext || null;
+}
 
+function selectedOrderRemainingBalanceCents(order) {
+  const helpers = orderPaymentHelpers();
+  if (helpers?.orderRemainingBalanceCents) {
+    return Math.max(0, Number(helpers.orderRemainingBalanceCents(order) || 0));
+  }
+  const totalCents = Math.max(0, Math.round(Number(order?.total || 0) * 100));
+  const paidCents = Array.isArray(order?.paymentLines)
+    ? order.paymentLines.reduce((sum, line) => sum + Math.max(0, Math.round((Number(line?.amount || 0) + Number(line?.tipAmount || 0)) * 100)), 0)
+    : 0;
+  return Math.max(0, totalCents - paidCents);
+}
+
+function selectedOrderPaymentEligible(order) {
+  const helpers = orderPaymentHelpers();
+  if (helpers?.isOrderPaymentEligible) {
+    return !!helpers.isOrderPaymentEligible(order);
+  }
+  if (!order) return false;
+  const status = String(order.status || '').toLowerCase();
+  if (status === 'completed' || status === 'closed' || status === 'canceled' || status === 'void' || status === 'voided') return false;
+  if (String(order.paymentStatus || '').toLowerCase() === 'paid') return false;
+  return selectedOrderRemainingBalanceCents(order) > 0;
+}
+
+function selectedOrderPaymentBadge(order) {
+  if (!order) return { paidClass: 'unpaid', paidText: 'NOT PAID' };
+  const status = String(order.paymentStatus || '').toLowerCase();
+  if (status === 'paid' || order.paid) return { paidClass: 'paid', paidText: 'PAID' };
+  const remainingCents = selectedOrderRemainingBalanceCents(order);
+  const totalCents = Math.max(0, Math.round(Number(order.total || 0) * 100));
+  if (remainingCents > 0 && remainingCents < totalCents) {
+    return { paidClass: 'partial', paidText: 'PARTIALLY PAID' };
+  }
+  return { paidClass: 'unpaid', paidText: 'NOT PAID' };
+}
+
+function buildPaymentPaneInputForOrderContext(order, context: OrderPaymentContext) {
+  const customer = order?.customer || {};
+  const lines = Array.isArray(order?.lines) ? order.lines : [];
+  const remainingCents = Math.max(0, Number(context.remainingBalanceCents || 0));
+  const totalCents = Math.max(0, Math.round(Number(order?.total || 0) * 100));
+  const subtotalCents = Math.max(0, Math.round(Number(order?.subtotal || 0) * 100));
+  const taxCents = Math.max(0, Math.round(Number(order?.tax || 0) * 100));
+  const paidCents = Math.max(0, totalCents - remainingCents);
+
+  return {
+    displayOrderNumber: String(order?.number || order?.orderNumber || context.orderId),
+    orderTypeLabel: paymentPaneOrderTypeLabel(order?.orderType),
+    stationName: `Main Station`,
+    subtotalCents,
+    taxCents,
+    totalCents,
+    tipCents: 0,
+    paymentsAppliedCents: paidCents,
+    remainingBalanceCents: remainingCents,
+    customer: {
+      name: String(customer?.name || order?.customerName || '').trim() || 'Guest',
+      phone: phoneDisplayValue(normalizePhone(customer?.phone || '')) || ''
+    },
+    items: lines.map((line) => {
+      const qty = Math.max(1, Number(line?.qty || 1));
+      const linePrice = Math.max(0, Number(line?.price || 0));
+      return {
+        id: line?.lineId || '',
+        name: line?.name || 'Item',
+        qty,
+        priceCents: Math.round(linePrice * 100),
+        subtitle: line?.size ? String(line.size) : ''
+      };
+    }),
+    orderType: String(order?.orderType || 'pickup'),
+    selectedMethod: context.selectedMethod,
+    savedPaymentMethods: buildSavedPaymentMethods(customer?.id || ''),
+    canRemoveSavedCards: state.managerUnlocked,
+    paymentContextSource: 'orders-management' as const,
+    paymentContextOrderId: context.orderId,
+    paymentContextHistoryId: context.historyId,
+    paymentContextRemainingBalanceCents: context.remainingBalanceCents,
+    paymentContextWorkflow: context.workflow
+  };
+}
+
+function closePaymentPaneToSource() {
+  const isOrderContext = state.orderPaymentContext?.source === 'orders-management';
+  state.paymentPaneState = null;
+  state.paymentPaneInput = null;
+  state.orderPaymentContext = null;
+  state.mainView = isOrderContext ? MAIN_VIEWS.orders : MAIN_VIEWS.menu;
+}
+
+function openSelectedOrderPaymentWorkflow(workflow: OrderPaymentWorkflow) {
+  if (state.orderSendLocked || !window.LilposPaymentPane) return;
+  const order = selectedOrderForDetail();
+  const helpers = orderPaymentHelpers();
+  if (!order || !helpers?.buildOrderPaymentContext) return;
+
+  const context = helpers.buildOrderPaymentContext(order, workflow, {
+    idempotencyKey: `orders-pay|${order.id}|${order.historyId || ''}|${workflow}|${selectedOrderRemainingBalanceCents(order)}`
+  });
+  if (!context) return;
+
+  state.orderPaymentContext = context;
+  const input = buildPaymentPaneInputForOrderContext(order, context);
+  state.paymentPaneInput = input;
+  state.paymentPaneState = window.LilposPaymentPane.createStateFromInput(input);
+  state.mainView = MAIN_VIEWS.payment;
+  restoreSplitWorkspaceForCurrentPane();
+  render();
+}
+
+function selectedOrderPaymentMethodSummaryForDisplay(paymentLine: any) {
+  const type = String(paymentLine?.paymentType || '').toLowerCase();
+  if (type.includes('card') && paymentLine?.cardBrand && paymentLine?.lastFour) {
+    const brand = String(paymentLine.cardBrand).charAt(0).toUpperCase() + String(paymentLine.cardBrand).slice(1).toLowerCase();
+    return `${brand} •••• ${paymentLine.lastFour}`;
+  }
+  if (type.includes('card')) return 'Credit/Debit Card';
+  if (type.includes('cash')) return 'Cash';
+  if (type.includes('text')) return 'Text Payment Link';
+  return paymentLine?.paymentType || 'Other Payment';
+}
+
+async function completeSelectedOrderPaymentFromPane(paymentLine: any, behavior: { closeAfter?: boolean } = {}) {
+  const context = state.orderPaymentContext;
+  if (!context || context.source !== 'orders-management') return;
+  const appliedCents = Math.max(0, Number(paymentLine?.amountCents || 0));
+  const tipAmountCents = Math.max(0, Number(paymentLine?.tipAmountCents || 0));
+  if (appliedCents <= 0) return;
+
+  state.orderSendLocked = true;
+  const now = nowIso();
+  try {
+    const snapshot = await lilposDataService.getOrderHistoryByOrderId(context.orderId);
+    if (!snapshot) throw new Error('Unable to locate selected order history snapshot.');
+
+    const totalCents = Math.max(0, Number(snapshot.totalCents || 0));
+    const currentPaidCents = Math.max(0, Number(snapshot.amountPaidCents || 0));
+    const nextPaidCents = Math.min(totalCents, currentPaidCents + appliedCents);
+    const remainingCents = Math.max(0, totalCents - nextPaidCents);
+    const nextPaymentStatus = remainingCents === 0 ? 'paid' : 'partially_paid';
+    const nextOrderStatus = remainingCents === 0 ? 'completed' : (snapshot.orderStatus || 'open');
+
+    await lilposDataService.savePaymentHistory({
+      orderId: context.orderId,
+      historyId: context.historyId || snapshot.historyId,
+      paymentType: paymentLine.paymentType,
+      amountCents: appliedCents + tipAmountCents,
+      baseAmountCents: appliedCents,
+      tipAmountCents,
+      cardBrand: paymentLine.cardBrand || '',
+      cardLastFour: paymentLine.lastFour || '',
+      paidAt: now,
+      employeeShortName: 'System',
+      idempotencyKey: `${context.idempotencyKey}|payment|${paymentLine.paymentType}|${appliedCents}|${tipAmountCents}`
+    });
+
+    await lilposDataService.appendOrderEvent({
+      orderId: context.orderId,
+      historyId: context.historyId || snapshot.historyId,
+      businessDate: snapshot.businessDate,
+      label: remainingCents === 0 ? 'Paid' : 'Partially Paid',
+      eventTimestamp: now,
+      employeeShortName: 'System',
+      idempotencyKey: `${context.idempotencyKey}|event|${remainingCents === 0 ? 'paid' : 'partial'}`,
+      metadata: {
+        source: context.source,
+        workflow: context.workflow,
+        amountCents: appliedCents,
+        tipAmountCents
+      }
+    });
+
+    const currentSummary = String(snapshot?.sourceSnapshot?.paymentMethodSummary || '').trim();
+    const paymentSummary = selectedOrderPaymentMethodSummaryForDisplay(paymentLine);
+    const nextSummary = currentSummary
+      ? `${currentSummary}, ${paymentSummary}`
+      : paymentSummary;
+
+    await lilposDataService.updateOrderHistorySnapshot(snapshot.historyId, {
+      paymentStatus: nextPaymentStatus,
+      orderStatus: nextOrderStatus,
+      amountPaidCents: nextPaidCents,
+      remainingBalanceCents: remainingCents,
+      completedAt: remainingCents === 0 ? now : snapshot.completedAt,
+      closedAt: remainingCents === 0 ? now : snapshot.closedAt,
+      sourceSnapshot: {
+        ...(snapshot.sourceSnapshot || {}),
+        paymentMethodSummary: nextSummary
+      }
+    });
+
+    delete state.persistedOrderDetailCacheById[context.orderId];
+    await refreshPersistedOrdersCache({ refreshNextOrderNumber: false, renderAfter: false });
+    await hydratePersistedOrderDetail(context.orderId);
+    if (behavior.closeAfter !== false) {
+      if (remainingCents === 0) {
+        const changeDueCents = paymentLine.paymentType === 'Cash'
+          ? Math.max(0, Number(paymentLine.amountCents || 0) - appliedCents)
+          : 0;
+        closePaymentPaneToSource();
+        openOrderNumberDialog(snapshot.displayOrderNumber, context.orderId, {
+          totalCents,
+          changeDueCents,
+          source: 'orders-management'
+        });
+      } else {
+        closePaymentPaneToSource();
+      }
+    }
+  } catch (err) {
+    console.error('Unable to complete selected order payment:', err);
+    if (behavior.closeAfter !== false) {
+      closePaymentPaneToSource();
+    }
+    alert('Unable to complete payment for this order. No payment was recorded.');
+  } finally {
+    state.orderSendLocked = false;
+  }
+}
+
+function previousOrderPaymentSummaryHtml(order) {
   const lines = resolvePreviousOrderPaymentLines(order).filter((line) => line.paymentType || line.amount > 0 || line.cardBrand || line.lastFour);
   const summaryText = String(order?.paymentMethodSummary || '').trim();
 
-  if (!lines.length && !summaryText) {
-    return `<div class="order-payment-method unavailable"><span class="order-payment-method-icon icon-glyph">${navIcon('payment')}</span><span>Payment method unavailable</span></div>`;
-  }
+  if (!lines.length && !summaryText) return '';
 
   if (lines.length > 1) {
     const withAmounts = lines.filter((line) => line.amount > 0);
     const splitDetails = withAmounts.length
       ? withAmounts.map((line) => `${paymentTypeDisplayLabel(line.paymentType)} ${money(line.amount)}`).join(' • ')
-      : 'Split Tender';
+      : 'Split Payment';
     return `<div class="order-payment-method split"><span class="order-payment-method-icon icon-glyph">${navIcon('split')}</span><span>${h(splitDetails)}</span></div>`;
   }
 
@@ -4576,6 +5180,13 @@ function selectedOrderForDetail() {
     const customer = resolveOrderCustomerSnapshot(persistedOrder);
     const lines = Array.isArray(persistedOrder.lines) ? persistedOrder.lines : [];
     const status = normalizeOrderStatus(persistedOrder);
+    const totalCents = Math.max(0, Math.round(Number(persistedOrder.total || 0) * 100));
+    const paidCents = orderPaymentHelpers()?.orderPaidAmountCents
+      ? Math.max(0, Number(orderPaymentHelpers().orderPaidAmountCents(persistedOrder) || 0))
+      : 0;
+    const remainingBalanceCents = orderPaymentHelpers()?.orderRemainingBalanceCents
+      ? Math.max(0, Number(orderPaymentHelpers().orderRemainingBalanceCents(persistedOrder) || 0))
+      : Math.max(0, totalCents - paidCents);
     return {
       id: persistedOrder.id,
       number: persistedOrder.orderNumber,
@@ -4604,6 +5215,9 @@ function selectedOrderForDetail() {
       auditEvents: persistedOrder.auditEvents || persistedOrder.auditTrail || persistedOrder.history || persistedOrder.events || persistedOrder.rawSnapshot?.auditEvents || persistedOrder.payloadSnapshot?.auditEvents || [],
       createdTimestamp: persistedOrder.createdTimestamp,
       updatedTimestamp: persistedOrder.updatedTimestamp,
+      historyId: persistedOrder.historyId || `hist_${persistedOrder.id}`,
+      amountPaidCents: paidCents,
+      remainingBalanceCents,
       lines,
       isPersisted: true
     };
@@ -4643,6 +5257,11 @@ function selectedOrderForDetail() {
       auditEvents: order.auditEvents || order.auditTrail || order.history || order.events || [],
       createdTimestamp: null,
       updatedTimestamp: null,
+      historyId: `hist_${order.id}`,
+      amountPaidCents: orderPaymentHelpers()?.orderPaidAmountCents
+        ? Math.max(0, Number(orderPaymentHelpers().orderPaidAmountCents(order) || 0))
+        : 0,
+      remainingBalanceCents: selectedOrderRemainingBalanceCents(order),
       lines: (order.lines || []).map((name, idx) => ({
         lineId: `legacy_${order.id}_${idx}`,
         name,
@@ -5499,13 +6118,32 @@ function activeOrderTypeDetailRowsHtml() {
   return '';
 }
 
+function shouldShowTogoGuestEditButton() {
+  const orderType = String(state.orderType || '').toLowerCase();
+  if (orderType !== 'togo') return false;
+  const togoName = String(state.orderTypeDetails?.togoName || state.customerDraft?.name || '').trim();
+  const togoPhone = normalizePhone(state.orderTypeDetails?.togoPhone || state.customerDraft?.phone || '');
+  return !!(togoName || togoPhone);
+}
+
+function togoGuestEditButtonHtml() {
+  if (!shouldShowTogoGuestEditButton()) return '';
+  return `
+    <button id="editTogoGuestDetails" class="previous-order-edit-btn customer-summary-edit-btn" title="Edit To-Go guest details" aria-label="Edit To-Go guest details">
+      <span class="icon-glyph">${navIcon('pencil')}</span>
+    </button>
+  `;
+}
+
 function compactCustomerSummaryHtml() {
   const orderTypeDetailsHtml = activeOrderTypeDetailRowsHtml();
+  const togoGuestEditBtn = togoGuestEditButtonHtml();
 
   if (!state.activeCustomer) {
     if (orderTypeDetailsHtml) {
       return `
-        <div class="customer-summary empty-summary">
+        <div class="customer-summary empty-summary customer-summary-populated ${togoGuestEditBtn ? 'customer-summary-has-edit' : ''}">
+          ${togoGuestEditBtn}
           ${orderTypeDetailsHtml}
         </div>
       `;
@@ -6214,9 +6852,13 @@ function renderCustomerManagementView() {
 
 function renderOrderTile(order) {
   const typeLabel = ORDER_TYPES[order.orderType] || order.orderType;
-  const paid = !!order.paid || String(order.paymentStatus || '').toLowerCase() === 'paid';
-  const paidClass = paid ? 'paid' : 'unpaid';
-  const paidText = paid ? 'PAID' : 'NOT PAID';
+  const paymentStatus = String(order.paymentStatus || '').toLowerCase();
+  const paid = !!order.paid || paymentStatus === 'paid';
+  const remainingCents = selectedOrderRemainingBalanceCents(order);
+  const totalCents = Math.max(0, Math.round(Number(order.total || 0) * 100));
+  const partial = !paid && remainingCents > 0 && remainingCents < totalCents;
+  const paidClass = paid ? 'paid' : (partial ? 'partial' : 'unpaid');
+  const paidText = paid ? 'PAID' : (partial ? 'PARTIAL' : 'NOT PAID');
   const displayNumber = formatOrderNumberForDisplay(order.number);
   return `
     <button class="order-mgmt-tile" data-open-order="${order.id}">
@@ -6636,8 +7278,9 @@ function renderOrderDetailInTicketPane() {
   const order = selectedOrderForDetail();
   if (!order) return '';
   const typeLabel = ORDER_TYPES[order.orderType] || order.orderType;
-  const paidClass = order.paid ? 'paid' : 'unpaid';
-  const paidText = order.paid ? 'PAID' : 'NOT PAID';
+  const paymentBadge = selectedOrderPaymentBadge(order);
+  const paidClass = paymentBadge.paidClass;
+  const paidText = paymentBadge.paidText;
   const displayNumber = formatOrderNumberForDisplay(order.number);
   return `
     <section class="ticket-section order-detail-pane">
@@ -6688,6 +7331,9 @@ function renderOrderDetailInTicketPane() {
 
 function ticketPanelHtml() {
   const viewingPreviousOrder = !!selectedOrderForDetail();
+  const detailOrder = selectedOrderForDetail();
+  const showSelectedOrderPayButtons = selectedOrderPaymentEligible(detailOrder);
+  const selectedOrderBalance = showSelectedOrderPayButtons ? selectedOrderRemainingBalanceCents(detailOrder) / 100 : 0;
   const showOrderSpecialInstructions = isNewOrderState();
   const sendState = getSendActionState(state.cart, state.orderType);
   const canCancelSale = state.cart.length > 0;
@@ -6745,6 +7391,24 @@ function ticketPanelHtml() {
             <div class="ticket-actions primary-actions">
               <button id="clearOrderDetail" class="btn-secondary" style="width: 100%;">Close</button>
             </div>
+            ${showSelectedOrderPayButtons ? `
+              <div class="ticket-actions previous-order-pay-actions">
+                <button id="paySelectedOrderCash" class="previous-order-pay-btn" title="Take cash payment on this order">
+                  <span class="previous-order-pay-icon icon-glyph">${navIcon('cash')}</span>
+                  <span class="previous-order-pay-label">Pay Now Cash</span>
+                  <span class="previous-order-pay-amount">${money(selectedOrderBalance)}</span>
+                </button>
+                <button id="paySelectedOrderCredit" class="previous-order-pay-btn" title="Take card payment on this order">
+                  <span class="previous-order-pay-icon icon-glyph">${navIcon('card')}</span>
+                  <span class="previous-order-pay-label">Pay Now Credit</span>
+                  <span class="previous-order-pay-amount">${money(selectedOrderBalance)}</span>
+                </button>
+                <button id="paySelectedOrderOther" class="previous-order-pay-btn" title="Take other payment method on this order">
+                  <span class="previous-order-pay-icon icon-glyph">${navIcon('payment')}</span>
+                  <span class="previous-order-pay-label">Pay Now Other</span>
+                </button>
+              </div>
+            ` : ''}
           </div>
         ` : `
           <div class="ticket-lines ticket-section">
@@ -6842,11 +7506,31 @@ function newSaleConfirmDialogHtml() {
 
 function orderNumberDialogHtml() {
   if (!state.orderNumberDialog.open) return '';
+  const dlg = state.orderNumberDialog;
+  const showPaymentInfo = dlg.totalCents > 0;
+  const displayNumber = dlg.orderNumber ? formatOrderNumberForDisplay(dlg.orderNumber) : '';
+  const fmtCents = (cents: number) => money(cents / 100);
   return `
     <div class="modal-backdrop">
       <div class="call-modal order-number-dialog">
-        <h3>Your Order Number Is:</h3>
-        <div class="order-number-value">${h(state.orderNumberDialog.orderNumber)}</div>
+        ${showPaymentInfo ? `
+          <div class="order-receipt-success-badge">&#10003; Payment Complete</div>
+          <div class="order-receipt-meta-row">
+            <span class="order-receipt-meta-label">Order</span>
+            <span class="order-receipt-meta-value">${displayNumber ? h(displayNumber) : '&mdash;'}</span>
+          </div>
+          <div class="order-receipt-meta-row">
+            <span class="order-receipt-meta-label">Ticket Total</span>
+            <span class="order-receipt-meta-value">${fmtCents(dlg.totalCents)}</span>
+          </div>
+          <div class="order-receipt-meta-row">
+            <span class="order-receipt-meta-label">Change Due</span>
+            <span class="order-receipt-meta-value order-receipt-change">${fmtCents(dlg.changeDueCents)}</span>
+          </div>
+        ` : `
+          <h3>Your Order Number Is:</h3>
+          <div class="order-number-value">${h(dlg.orderNumber)}</div>
+        `}
         <div class="call-modal-actions order-number-actions">
           <button id="orderPrintCustomer" class="btn-secondary">Print customer receipt</button>
           <button id="orderPrintMerchant" class="btn-secondary">Print merchant receipt</button>
@@ -6867,12 +7551,12 @@ function orderTypeDraftDialogHtml() {
 
   return `
     <div class="modal-backdrop">
-      <div class="call-modal manager-modal">
+      <div class="call-modal manager-modal order-type-draft-dialog">
         <h3>${isTogo ? 'Start To-Go Order' : 'Start Dine-In Order'}</h3>
         <p>${isTogo ? 'Name and phone are optional for To-Go.' : 'Table number is optional for Dine-In.'}</p>
         ${isTogo ? `
           <div class="entry-grid">
-            <input id="togoDraftName" data-keyboard-context="customer-profile-name" placeholder="Optional name" value="${h(draft.name || '')}" />
+            <input id="togoDraftName" data-keyboard-context="customer-profile-name" data-keyboard-placement="above" placeholder="Optional name" value="${h(draft.name || '')}" />
             <input id="togoDraftPhone" type="tel" inputmode="tel" autocomplete="tel" data-keyboard-kind="phone" data-keyboard-context="customer-profile-phone" placeholder="Optional phone" value="${h(draft.phone || '')}" />
           </div>
         ` : `
@@ -7545,6 +8229,18 @@ function render() {
     });
   }
 
+  if (state.focusOrderTypeDraftNameOnRender && state.orderTypeDraftDialog?.open && state.orderTypeDraftDialog?.type === 'togo') {
+    state.focusOrderTypeDraftNameOnRender = false;
+    requestAnimationFrame(() => {
+      const input = document.querySelector('#togoDraftName') as HTMLInputElement | null;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      const end = input.value.length;
+      if (typeof input.setSelectionRange === 'function') input.setSelectionRange(end, end);
+      keyboardController.showKeyboardForInput(input, { source: 'togo-draft-open' });
+    });
+  }
+
   if (state.scrollCartOnAdd) {
     state.scrollCartOnAdd = false;
     requestAnimationFrame(() => {
@@ -7964,6 +8660,10 @@ function attachEvents() {
   });
 
   $('#editCustomer')?.addEventListener('click', openCustomerEditor);
+  $('#editTogoGuestDetails')?.addEventListener('click', () => {
+    openOrderTypeDraftDialog('togo');
+    render();
+  });
 
   $('#ordersViewBtn')?.addEventListener('click', () => {
     state.mainView = MAIN_VIEWS.orders;
@@ -8043,6 +8743,18 @@ function attachEvents() {
     state.selectedOrderId = null;
     state.previousOrderAuditExpanded = false;
     render();
+  });
+
+  $('#paySelectedOrderCash')?.addEventListener('click', () => {
+    openSelectedOrderPaymentWorkflow('cash');
+  });
+
+  $('#paySelectedOrderCredit')?.addEventListener('click', () => {
+    openSelectedOrderPaymentWorkflow('credit');
+  });
+
+  $('#paySelectedOrderOther')?.addEventListener('click', () => {
+    openSelectedOrderPaymentWorkflow('other');
   });
 
   $('#previousOrderEditBtn')?.addEventListener('click', () => {
@@ -8356,6 +9068,141 @@ function attachEvents() {
     });
   });
 
+  document.querySelectorAll('[data-lilpay-split-mode]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const mode = String((btn as HTMLElement).dataset.lilpaySplitMode || 'CUSTOM').toUpperCase() === 'EVEN' ? 'EVEN' : 'CUSTOM';
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-set-mode',
+        mode
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-split-even-count]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const count = Number((btn as HTMLElement).dataset.lilpaySplitEvenCount || 2);
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-set-even-count',
+        count
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  $('[data-lilpay-split-generate-even="1"]')?.addEventListener('click', async () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'split-generate-even',
+      method: 'card'
+    });
+    await persistSplitWorkspaceFromPaneState();
+    render();
+  });
+
+  const splitAmountInput = $('#lilpaySplitAmount') as HTMLInputElement | null;
+  splitAmountInput?.addEventListener('input', async () => {
+    if (!state.paymentPaneState) return;
+    const cents = window.LilposPaymentPane.parseMoneyInputToCents(splitAmountInput.value || '0');
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'split-set-amount-editor',
+      cents
+    });
+    await persistSplitWorkspaceFromPaneState();
+    render();
+  });
+
+  document.querySelectorAll('[data-lilpay-split-add]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState?.splitWorkspace) return;
+      const rawMethod = String((btn as HTMLElement).dataset.lilpaySplitAdd || 'cash');
+      const method: SplitPortionPaymentMethod = rawMethod === 'card' ? 'card' : rawMethod === 'other' ? 'other' : 'cash';
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-add-portion',
+        method,
+        amountCents: state.paymentPaneState.splitWorkspace.amountEditorCents
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-split-select]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const portionId = String((btn as HTMLElement).dataset.lilpaySplitSelect || '');
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-select-portion',
+        portionId: portionId || null
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-split-remove]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const portionId = String((btn as HTMLElement).dataset.lilpaySplitRemove || '');
+      if (!portionId) return;
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-remove-portion',
+        portionId
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-split-method]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const raw = String((btn as HTMLElement).dataset.lilpaySplitMethod || '');
+      const [portionId, methodRaw] = raw.split(':');
+      if (!portionId) return;
+      const method: SplitPortionPaymentMethod = methodRaw === 'card' ? 'card' : methodRaw === 'other' ? 'other' : 'cash';
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-set-portion-method',
+        portionId,
+        method
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-split-process]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const portionId = String((btn as HTMLElement).dataset.lilpaySplitProcess || '');
+      if (!portionId) return;
+      openSplitPortionTender(portionId);
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-split-retry]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const portionId = String((btn as HTMLElement).dataset.lilpaySplitRetry || '');
+      if (!portionId || !state.paymentPaneState) return;
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-mark-processing',
+        portionId
+      });
+      const workspace = splitWorkspaceFromPaneState();
+      const portion = workspace?.portions.find((entry) => entry.id === portionId) || null;
+      if (portion) {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+          type: 'select-method',
+          method: splitPaymentMethodToPaneMethod(portion.paymentMethod)
+        });
+      }
+      render();
+    });
+  });
+
   document.querySelectorAll('[data-lilpay-key]').forEach((b) => {
     b.addEventListener('click', () => {
       if (!state.paymentPaneState) return;
@@ -8419,14 +9266,17 @@ function attachEvents() {
 
   document.querySelectorAll('[data-lilpay-back="1"]').forEach((b) => {
     b.addEventListener('click', () => {
-      state.mainView = MAIN_VIEWS.menu;
-      state.paymentPaneState = null;
-      state.paymentPaneInput = null;
+      closePaymentPaneToSource();
       render();
     });
   });
 
   $('[data-lilpay-send-unpaid="1"]')?.addEventListener('click', () => {
+    if (state.orderPaymentContext?.source === 'orders-management') {
+      closePaymentPaneToSource();
+      render();
+      return;
+    }
     state.mainView = MAIN_VIEWS.menu;
     state.paymentPaneState = null;
     state.paymentPaneInput = null;
@@ -8468,9 +9318,10 @@ function attachEvents() {
   $('[data-lilpay-split-payment="1"]')?.addEventListener('click', () => {
     if (!state.paymentPaneState) return;
     state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
-      type: 'set-error',
-      message: 'Split payment is coming soon.'
+      type: 'select-method',
+      method: 'split'
     });
+    persistSplitWorkspaceFromPaneState();
     render();
   });
 
@@ -8673,7 +9524,11 @@ function attachEvents() {
   $('#orderPrintMerchant')?.addEventListener('click', () => printOrderNumberReceipt('merchant_receipt'));
   $('#orderPrintBoth')?.addEventListener('click', () => printOrderNumberReceipt('both_receipts'));
   $('#orderNumberDone')?.addEventListener('click', () => {
+    const source = state.orderNumberDialog.source;
     closeOrderNumberDialog();
+    if (source === 'orders-management') {
+      state.mainView = MAIN_VIEWS.orders;
+    }
     render();
   });
 
