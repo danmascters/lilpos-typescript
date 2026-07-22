@@ -99,6 +99,245 @@ const ORDER_SPECIAL_INSTRUCTION_CHIPS = [
 
 const DEFAULT_KEYBOARD_MODE: KeyboardMode = 'micro';
 
+type PrepPriceBehavior = 'none' | 'force_zero' | 'multiplier' | 'fixed' | 'delta';
+
+type PrepSelectedColorRole = 'default' | 'warning' | 'danger';
+
+type PrepModifierOption = {
+  id: string;
+  label: string;
+  displayPattern: string;
+  priceBehavior: PrepPriceBehavior;
+  priceValue: number;
+  resetsAfterUse: boolean;
+  selectedColorRole?: PrepSelectedColorRole;
+};
+
+const PIZZA_TOPPING_PREPS: PrepModifierOption[] = [
+  {
+    id: 'no',
+    label: 'NO',
+    displayPattern: 'NO {modifier}',
+    priceBehavior: 'force_zero',
+    priceValue: 0,
+    resetsAfterUse: true,
+    selectedColorRole: 'danger'
+  },
+  {
+    id: 'lite',
+    label: 'LITE',
+    displayPattern: 'LITE {modifier}',
+    priceBehavior: 'force_zero',
+    priceValue: 0,
+    resetsAfterUse: true,
+    selectedColorRole: 'warning'
+  },
+  {
+    id: 'extra',
+    label: 'EXTRA',
+    displayPattern: 'EXTRA {modifier}',
+    priceBehavior: 'multiplier',
+    priceValue: 2,
+    resetsAfterUse: true,
+    selectedColorRole: 'warning'
+  },
+  {
+    id: 'side',
+    label: 'SIDE',
+    displayPattern: '{modifier} on Side',
+    priceBehavior: 'none',
+    priceValue: 0,
+    resetsAfterUse: true,
+    selectedColorRole: 'warning'
+  },
+  {
+    id: 'heavy',
+    label: 'HEAVY',
+    displayPattern: 'HEAVY {modifier}',
+    priceBehavior: 'multiplier',
+    priceValue: 2,
+    resetsAfterUse: true,
+    selectedColorRole: 'warning'
+  }
+];
+
+const PREP_MODIFIER_SETS: Record<string, PrepModifierOption[]> = {
+  pizza_topping_preps: PIZZA_TOPPING_PREPS
+};
+
+function prepModifierSetById(prepModifierSetId) {
+  const id = String(prepModifierSetId || '').trim();
+  if (!id) return [];
+  return PREP_MODIFIER_SETS[id] || [];
+}
+
+function prepModifierSetForGroup(group) {
+  const explicitSet = prepModifierSetById(group?.prepModifierSetId);
+  if (explicitSet.length) return explicitSet;
+
+  // Backward compatibility for older runtime payloads that do not include prepModifierSetId.
+  const pricingMode = String(group?.pricingMode || '').trim().toLowerCase();
+  const groupName = String(group?.name || '').trim().toLowerCase();
+  const allowHalf = group?.allowHalf === true;
+  const isPizzaToppingGroup = pricingMode === 'pizza_half_whole'
+    || (allowHalf && groupName.includes('pizza topping'));
+
+  if (isPizzaToppingGroup) return PIZZA_TOPPING_PREPS;
+  return [];
+}
+
+function prepModifierById(group, prepId) {
+  if (!group || !prepId) return null;
+  const prepIdText = String(prepId).trim();
+  return prepModifierSetForGroup(group).find((prep) => prep.id === prepIdText) || null;
+}
+
+function getActivePrepModifierForGroup(groupId) {
+  const gid = String(groupId || '').trim();
+  if (!gid) return null;
+  const group = state.idx?.groupsById?.[gid];
+  if (!group) return null;
+  const prepId = state.selectedConfig?.activePrepModifierByGroup?.[gid];
+  if (!prepId) return null;
+  return prepModifierById(group, prepId);
+}
+
+function setActivePrepModifierForGroup(groupId, prepId) {
+  const gid = String(groupId || '').trim();
+  if (!gid) return;
+  state.selectedConfig.activePrepModifierByGroup = state.selectedConfig.activePrepModifierByGroup || {};
+  if (!prepId) {
+    delete state.selectedConfig.activePrepModifierByGroup[gid];
+    return;
+  }
+  state.selectedConfig.activePrepModifierByGroup[gid] = prepId;
+}
+
+function clearActivePrepModifierForGroup(groupId) {
+  setActivePrepModifierForGroup(groupId, null);
+}
+
+// ── Modifier Dialog History (Undo / Redo / Start Over) ──────────────────────
+
+function cloneDialogConfig(cfg: any): any {
+  if (!cfg) return null;
+  return JSON.parse(JSON.stringify(cfg));
+}
+
+function snapshotDialogState() {
+  if (!state.selectedConfig || !state.modifierDialogHistory) return;
+  const snap = cloneDialogConfig(state.selectedConfig);
+  const { past } = state.modifierDialogHistory;
+  // Deduplicate: skip if the top snapshot is already identical to the current state
+  if (past.length > 0 && JSON.stringify(past[past.length - 1]) === JSON.stringify(snap)) return;
+  past.push(snap);
+  state.modifierDialogHistory.future = [];
+}
+
+function dialogHistoryUndo() {
+  const h = state.modifierDialogHistory;
+  if (!h || h.past.length === 0) return;
+  const editingLineId = state.selectedConfig?.editingLineId ?? null;
+  h.future.unshift(cloneDialogConfig(state.selectedConfig));
+  state.selectedConfig = { ...h.past.pop(), editingLineId };
+  state.startOverConfirmPending = false;
+  render();
+}
+
+function dialogHistoryRedo() {
+  const h = state.modifierDialogHistory;
+  if (!h || h.future.length === 0) return;
+  const editingLineId = state.selectedConfig?.editingLineId ?? null;
+  h.past.push(cloneDialogConfig(state.selectedConfig));
+  state.selectedConfig = { ...h.future.shift(), editingLineId };
+  state.startOverConfirmPending = false;
+  render();
+}
+
+let _startOverConfirmTimer: ReturnType<typeof setTimeout> | null = null;
+
+function dialogHistoryStartOver() {
+  if (!state.startOverConfirmPending) {
+    state.startOverConfirmPending = true;
+    if (_startOverConfirmTimer) clearTimeout(_startOverConfirmTimer);
+    _startOverConfirmTimer = setTimeout(() => {
+      if (state.startOverConfirmPending) {
+        state.startOverConfirmPending = false;
+        render();
+      }
+    }, 3000);
+    render();
+    return;
+  }
+  if (_startOverConfirmTimer) { clearTimeout(_startOverConfirmTimer); _startOverConfirmTimer = null; }
+  state.startOverConfirmPending = false;
+  const h = state.modifierDialogHistory;
+  if (h) {
+    h.past.push(cloneDialogConfig(state.selectedConfig));
+    h.future = [];
+  }
+  const editingLineId = state.selectedConfig?.editingLineId ?? null;
+  state.selectedConfig = { ...cloneDialogConfig(state.modifierDialogInitialConfig), editingLineId };
+  render();
+}
+
+function isDialogAtInitialState(): boolean {
+  if (!state.modifierDialogInitialConfig || !state.modifierDialogHistory) return true;
+  const curr = cloneDialogConfig(state.selectedConfig);
+  const init = cloneDialogConfig(state.modifierDialogInitialConfig);
+  // Exclude UI-navigation and transient fields from the comparison
+  for (const f of ['pizzaNav', 'pizzaFilter', 'activePrepModifierByGroup', 'editingLineId']) {
+    if (curr) delete curr[f];
+    if (init) delete init[f];
+  }
+  return JSON.stringify(curr) === JSON.stringify(init);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+function resolvePrepDisplayLabel(modifierName, prepModifier) {
+  const baseName = asModifierValue(modifierName);
+  if (!prepModifier?.displayPattern) return baseName;
+  return prepModifier.displayPattern.replace('{modifier}', baseName).trim();
+}
+
+function prepPriceMultiplier(prepModifier) {
+  if (!prepModifier) return 1;
+  if (prepModifier.priceBehavior === 'multiplier') {
+    const factor = Number(prepModifier.priceValue || 1);
+    return Number.isFinite(factor) && factor > 0 ? factor : 1;
+  }
+  return 1;
+}
+
+function prepAdjustedModifierPrice(basePrice, prepModifier) {
+  const safeBasePrice = Number(basePrice || 0);
+  if (!prepModifier) return +safeBasePrice.toFixed(2);
+  const behavior = prepModifier.priceBehavior;
+  const value = Number(prepModifier.priceValue || 0);
+
+  if (behavior === 'none') return +safeBasePrice.toFixed(2);
+  if (behavior === 'force_zero') return 0;
+  if (behavior === 'multiplier') return +(safeBasePrice * prepPriceMultiplier(prepModifier)).toFixed(2);
+  if (behavior === 'delta') return +(safeBasePrice + value).toFixed(2);
+  if (behavior === 'fixed') return +value.toFixed(2);
+  return +safeBasePrice.toFixed(2);
+}
+
+function prepSelectedRowClassName(role) {
+  const normalizedRole = String(role || '').trim().toLowerCase();
+  if (!normalizedRole || normalizedRole === 'default') return '';
+  return normalizedRole === 'danger' || normalizedRole === 'warning'
+    ? `prep-selected-${normalizedRole}`
+    : '';
+}
+
+function filterModifierOptions(options: any[], searchText: string): any[] {
+  const term = searchText.trim().toLowerCase();
+  if (!term) return options;
+  return options.filter((o) => (o.name || '').toLowerCase().includes(term));
+}
+
 function normalizeOrderStatus(order) {
   const rawStatus = String(order?.status || '').trim().toLowerCase();
   if (rawStatus === 'completed' || rawStatus === 'open' || rawStatus === 'canceled' || rawStatus === 'closed') {
@@ -1027,10 +1266,16 @@ const keyboardController = (() => {
       window.innerWidth - keyboardWidth - MICRO_KEYBOARD_GAP
     );
     const preferredTop = rect.bottom + MICRO_KEYBOARD_GAP;
+    const forceAbove = (inputElement as HTMLElement)?.dataset?.keyboardPlacement === 'above';
+    const preferredAboveTop = Math.max(MICRO_KEYBOARD_GAP, rect.top - keyboardHeight - MICRO_KEYBOARD_GAP);
     const fitsBelow = preferredTop + keyboardHeight <= window.innerHeight - MICRO_KEYBOARD_GAP;
-    const top = fitsBelow
-      ? preferredTop
-      : Math.max(MICRO_KEYBOARD_GAP, rect.top - keyboardHeight - MICRO_KEYBOARD_GAP);
+    const fitsAbove = rect.top - keyboardHeight - MICRO_KEYBOARD_GAP >= MICRO_KEYBOARD_GAP;
+    let top: number;
+    if (forceAbove) {
+      top = fitsAbove ? preferredAboveTop : preferredTop;
+    } else {
+      top = fitsBelow ? preferredTop : preferredAboveTop;
+    }
     shell.style.left = `${left}px`;
     shell.style.top = `${top}px`;
   }
@@ -1194,9 +1439,10 @@ const keyboardController = (() => {
       hideKeyboard();
       return;
     }
-    showKeyboardForInput(target, { source: 'keyboard-edit' });
+    // Preserve caret across render-sync so typed characters continue left-to-right.
+    showKeyboardForInput(target, { source: 'keyboard-edit', skipRememberSelection: true });
     positionMicroKeyboard(target);
-    rememberSelectionForTarget(target);
+    restoreSelectionForTarget(target);
   }
 
   function handleMicroKeyboardAction(action, keyValue) {
@@ -1245,7 +1491,7 @@ const keyboardController = (() => {
     stabilizeMicroKeyboardAfterEdit();
   }
 
-  function showKeyboardForInput(inputElement, _context = {}) {
+  function showKeyboardForInput(inputElement, _context: any = {}) {
     if (!inputElement || !isSupportedInput(inputElement)) {
       hideKeyboard();
       return;
@@ -1253,7 +1499,9 @@ const keyboardController = (() => {
     disableNativeInputSuggestions(inputElement);
     activeKeyboardTarget = inputElement;
     activeTargetLocator = buildTargetLocator(inputElement);
-    rememberSelectionForTarget(inputElement);
+    if (!_context.skipRememberSelection) {
+      rememberSelectionForTarget(inputElement);
+    }
     activeInputKind = getKeyboardInputKind(inputElement);
     activeIntentFieldType = activeInputKind === 'text' ? intentFieldTypeForInput(inputElement) : 'generic-text';
     refreshIntentChips();
@@ -1333,7 +1581,7 @@ const keyboardController = (() => {
       hideKeyboard();
       return;
     }
-    showKeyboardForInput(target, { source: 'render-sync' });
+    showKeyboardForInput(target, { source: 'render-sync', skipRememberSelection: true });
   }
 
   function shouldKeepKeyboardOpenOnFocusOut(nextElement) {
@@ -1469,7 +1717,7 @@ function installKeyboardLifecycleEvents() {
   document.addEventListener('click', (event) => {
     const el = event.target as Element;
     if (!el) return;
-    if (!el.closest('[data-order-type],[data-cat],[data-item],[data-pizza-nav],[data-pizza-filter],[data-mod-group],[data-pre-group]')) return;
+    if (!el.closest('[data-order-type],[data-cat],[data-item],[data-pizza-nav],[data-pizza-filter],[data-pizza-prep-group],[data-mod-group],[data-pre-group]')) return;
     window.setTimeout(() => {
       const focused = document.activeElement as Element | null;
       if (!keyboardController.isSupportedInput(focused)) return;
@@ -3266,24 +3514,50 @@ function getPizzaUnitPrice(option, item, side, sizeName) {
   return Number(option.price || 0);
 }
 
-function buildPizzaModifierEntry(group, option, item, side, multiplier, sizeName) {
+function normalizeStoredPrepModifier(entry, group) {
+  const explicitId = String(entry?.prepModifierId || '').trim();
+  if (explicitId) return prepModifierById(group, explicitId);
+  const explicitLabel = String(entry?.prepModifierLabel || '').trim().toLowerCase();
+  if (explicitLabel) {
+    return prepModifierSetForGroup(group).find((prep) => prep.label.toLowerCase() === explicitLabel) || null;
+  }
+  return null;
+}
+
+function buildPizzaModifierEntry(group, option, item, side, multiplier, sizeName, prepModifier = null) {
   const safeMultiplier = Math.max(1, Math.min(3, Number(multiplier || 1)));
-  const unitPrice = +getPizzaUnitPrice(option, item, side, sizeName).toFixed(2);
-  const totalPrice = +(unitPrice * safeMultiplier).toFixed(2);
+  const basePrice = +getPizzaUnitPrice(option, item, side, sizeName).toFixed(2);
+  const totalPriceBeforePrep = +(basePrice * safeMultiplier).toFixed(2);
+  const finalPrice = prepAdjustedModifierPrice(totalPriceBeforePrep, prepModifier);
   const pre = pizzaPreModifierFromSide(side);
+  const resolvedLabel = resolvePrepDisplayLabel(option?.name || '', prepModifier);
   return {
     modifierGroupId: group.id,
     modifierGroupName: group.name,
     optionId: option?.id || null,
-    optionName: option?.name || '',
-    price: totalPrice,
+    optionLabel: option?.name || '',
+    optionName: resolvedLabel,
+    resolvedLabel,
+    price: finalPrice,
     preModifierType: 'portion',
     preModifierValue: pre.value,
     preModifierLabel: pre.label,
+    prepModifierSetId: group?.prepModifierSetId || null,
+    prepModifierId: prepModifier?.id || null,
+    prepModifierLabel: prepModifier?.label || null,
+    prepDisplayPattern: prepModifier?.displayPattern || null,
+    prepPriceBehavior: prepModifier?.priceBehavior || null,
+    prepPriceValue: Number(prepModifier?.priceValue || 0),
+    prepResetsAfterUse: !!prepModifier?.resetsAfterUse,
+    prepSelectedColorRole: prepModifier?.selectedColorRole || null,
     side,
     multiplier: safeMultiplier,
-    unitPrice,
-    totalPrice,
+    quantityMultiplier: safeMultiplier,
+    prepMultiplier: prepPriceMultiplier(prepModifier),
+    unitPrice: basePrice,
+    basePrice,
+    finalPrice,
+    totalPrice: finalPrice,
     toppingId: option?.id || null,
     toppingName: option?.name || ''
   };
@@ -3298,15 +3572,22 @@ function togglePizzaSelection(group, option, side) {
   state.selectedConfig.mods = state.selectedConfig.mods || {};
   const current = normalizedSelectedMods(group.id);
   const existing = current.find((entry) => entry.optionId === option.id);
+  const activePrepModifier = getActivePrepModifierForGroup(group.id);
+  const existingPrepModifier = normalizeStoredPrepModifier(existing, group);
+  const prepModifier = activePrepModifier || existingPrepModifier || null;
   const selectedSide = existing?.side || pizzaSideFromPreModifier(existing?.preModifierValue);
-  if (existing && selectedSide === side) {
+  const samePrep = String(existing?.prepModifierId || '') === String(prepModifier?.id || '');
+  if (existing && selectedSide === side && !activePrepModifier && samePrep) {
     state.selectedConfig.mods[group.id] = current.filter((entry) => entry.optionId !== option.id);
     return;
   }
   const multiplier = existing?.multiplier || 1;
   const sizeName = state.selectedConfig.size || state.selected.sizeSchema?.[0]?.name || null;
-  const next = buildPizzaModifierEntry(group, option, state.selected, side, multiplier, sizeName);
+  const next = buildPizzaModifierEntry(group, option, state.selected, side, multiplier, sizeName, prepModifier);
   state.selectedConfig.mods[group.id] = [...current.filter((entry) => entry.optionId !== option.id), next];
+  if (activePrepModifier?.resetsAfterUse) {
+    clearActivePrepModifierForGroup(group.id);
+  }
 }
 
 function cyclePizzaSelectionMultiplier(group, option) {
@@ -3314,11 +3595,17 @@ function cyclePizzaSelectionMultiplier(group, option) {
   state.selectedConfig.mods = state.selectedConfig.mods || {};
   const current = normalizedSelectedMods(group.id);
   const existing = current.find((entry) => entry.optionId === option.id);
+  const activePrepModifier = getActivePrepModifierForGroup(group.id);
+  const existingPrepModifier = normalizeStoredPrepModifier(existing, group);
+  const prepModifier = activePrepModifier || existingPrepModifier || null;
   const side = existing?.side || pizzaSideFromPreModifier(existing?.preModifierValue) || 'whole';
   const multiplier = existing?.multiplier ? (existing.multiplier >= 3 ? 1 : existing.multiplier + 1) : 2;
   const sizeName = state.selectedConfig.size || state.selected.sizeSchema?.[0]?.name || null;
-  const next = buildPizzaModifierEntry(group, option, state.selected, side, multiplier, sizeName);
+  const next = buildPizzaModifierEntry(group, option, state.selected, side, multiplier, sizeName, prepModifier);
   state.selectedConfig.mods[group.id] = [...current.filter((entry) => entry.optionId !== option.id), next];
+  if (activePrepModifier?.resetsAfterUse) {
+    clearActivePrepModifierForGroup(group.id);
+  }
 }
 
 function resizePizzaSelectionPrices(item, sizeName) {
@@ -3333,7 +3620,8 @@ function resizePizzaSelectionPrices(item, sizeName) {
     const side = entry.side || pizzaSideFromPreModifier(entry.preModifierValue) || 'whole';
     const multiplier = Math.max(1, Math.min(3, Number(entry.multiplier || 1)));
     if (!option) return entry;
-    return buildPizzaModifierEntry(group, option, item, side, multiplier, sizeName);
+    const prepModifier = normalizeStoredPrepModifier(entry, group);
+    return buildPizzaModifierEntry(group, option, item, side, multiplier, sizeName, prepModifier);
   });
 }
 
@@ -3347,7 +3635,8 @@ function pizzaSelectionSummary(groupId) {
   const bySide = { whole: [], left: [], right: [] };
   selections.forEach((entry) => {
     const side = entry.side || pizzaSideFromPreModifier(entry.preModifierValue) || 'whole';
-    const text = entry.multiplier > 1 ? `${entry.optionName} ${entry.multiplier}X` : entry.optionName;
+    const displayLabel = entry.resolvedLabel || entry.optionName || entry.optionLabel || '';
+    const text = entry.multiplier > 1 ? `${displayLabel} ${entry.multiplier}X` : displayLabel;
     if (!bySide[side]) bySide[side] = [];
     bySide[side].push(text);
   });
@@ -3405,7 +3694,7 @@ function getPreModifierCounts(groupId) {
 }
 
 function selectionLabel(modifier) {
-  const name = modifier?.optionName || '';
+  const name = modifier?.resolvedLabel || modifier?.optionName || modifier?.optionLabel || '';
   const multiplier = Number(modifier?.multiplier || 1);
   const nameWithMultiplier = multiplier > 1 ? `${name} ${multiplier}X` : name;
   const price = Number(modifier?.price || 0);
@@ -3615,6 +3904,7 @@ function generateMenu(scale = 'large'): any {
       pricingMode: rules.pricingMode || 'flat',
       allowHalf: !!rules.allowHalf,
       nested: !!rules.nested,
+      prepModifierSetId: rules.prepModifierSetId || null,
       preModifierType: rules.preModifierType || null,
       preModifierOptions: Array.isArray(rules.preModifierOptions)
         ? rules.preModifierOptions.map((opt) => {
@@ -3661,6 +3951,7 @@ function generateMenu(scale = 'large'): any {
   const pizzaToppingsGroup = addGroup('Pizza Toppings - Half/Whole Size Aware', 'multi-select', toppingOptions, {
     allowHalf: true,
     pricingMode: 'pizza_half_whole',
+    prepModifierSetId: 'pizza_topping_preps',
     preModifierType: 'portion',
     preModifierOptions: [
       { value: 'WHOLE', label: 'WHOLE' },
@@ -5311,11 +5602,16 @@ function openItem(id) {
     size: state.selected?.sizeSchema?.[0]?.name || null,
     mods: {},
     preModifiers,
+    activePrepModifierByGroup: {},
     pizzaFilter: 'ALL',
     pizzaNav: 'pizza',
     pizzaNotes: '',
     editingLineId: null
   };
+  state.modifierDialogInitialConfig = cloneDialogConfig(state.selectedConfig);
+  state.modifierDialogHistory = { past: [], future: [] };
+  state.startOverConfirmPending = false;
+  state.modifierSearch = '';
   render();
 }
 
@@ -5387,7 +5683,16 @@ function normalizedModifierCompareEntry(entry) {
       modifierGroupId: entry.modifierGroupId || null,
       modifierGroupName: asModifierValue(entry.modifierGroupName || ''),
       optionId: entry.optionId || null,
+      optionLabel: asModifierValue(entry.optionLabel || ''),
       optionName: asModifierValue(entry.optionName || ''),
+      resolvedLabel: asModifierValue(entry.resolvedLabel || ''),
+      prepModifierSetId: asModifierValue(entry.prepModifierSetId || ''),
+      prepModifierId: asModifierValue(entry.prepModifierId || ''),
+      prepModifierLabel: asModifierValue(entry.prepModifierLabel || ''),
+      prepDisplayPattern: asModifierValue(entry.prepDisplayPattern || ''),
+      prepPriceBehavior: asModifierValue(entry.prepPriceBehavior || ''),
+      prepPriceValue: +Number(entry.prepPriceValue || 0).toFixed(2),
+      prepSelectedColorRole: asModifierValue(entry.prepSelectedColorRole || ''),
       preModifierType: asModifierValue(entry.preModifierType || ''),
       preModifierValue: asModifierValue(entry.preModifierValue || ''),
       preModifierLabel: asModifierValue(entry.preModifierLabel || ''),
@@ -5512,11 +5817,16 @@ function openLineItemEditor(lineId) {
     size: line.size || item.sizeSchema?.[0]?.name || null,
     mods: byGroup,
     preModifiers,
+    activePrepModifierByGroup: {},
     pizzaFilter: 'ALL',
     pizzaNav: 'pizza',
     pizzaNotes: line.specialInstruction || '',
     editingLineId: line.lineId
   };
+  state.modifierDialogInitialConfig = cloneDialogConfig(state.selectedConfig);
+  state.modifierDialogHistory = { past: [], future: [] };
+  state.startOverConfirmPending = false;
+  state.modifierSearch = '';
   render();
 }
 
@@ -6948,6 +7258,8 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
   const options = state.idx.optsByGroup.get(pizzaGroup.id) || [];
   const filtered = options.filter((option) => activeTab === 'ALL' || pizzaCategoryForOptionName(option.name) === activeTab);
   const prepGroups = groups.filter((g) => g.id !== pizzaGroup.id);
+  const prepModifierSet = prepModifierSetForGroup(pizzaGroup);
+  const activePrepModifier = getActivePrepModifierForGroup(pizzaGroup.id);
   const summary = pizzaSelectionSummary(pizzaGroup.id);
   const basePrice = item.fixedPrice ? item.basePrice : item.sizeSchema?.find((s) => s.name === size)?.price || item.basePrice;
   const modsPrice = selectedModifierTotal();
@@ -6956,15 +7268,27 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
   const prepDone = pizzaPrepHasSelections(groups, pizzaGroup.id);
   const notesDone = !!(state.selectedConfig.pizzaNotes || '').trim();
 
+  const canUndo = !!(state.modifierDialogHistory?.past?.length);
+  const canRedo = !!(state.modifierDialogHistory?.future?.length);
+  const atInitial = isDialogAtInitialState();
+  const startOverPending = !!state.startOverConfirmPending;
+
   return `
     <div class="modal-backdrop">
       <div class="modal pizza-mod-modal">
         <header>
-          <div>
+          <div class="modal-header-title">
             <h2>${h(item.name)}</h2>
             <p>${h(item.description)}</p>
           </div>
-          <button id="closeModal">x</button>
+          <div class="modal-header-actions">
+            <div class="modal-header-history-actions">
+              <button id="modUndo" class="modal-action-btn mod-btn-icon" ${canUndo ? '' : 'disabled'} title="Undo last change" aria-label="Undo">↩</button>
+              <button id="modRedo" class="modal-action-btn mod-btn-icon" ${canRedo ? '' : 'disabled'} title="Redo" aria-label="Redo">↪</button>
+              <button id="modStartOver" class="modal-action-btn mod-btn-label${startOverPending ? ' start-over-confirm' : ''}" ${atInitial && !startOverPending ? 'disabled' : ''} title="Start Over?">${startOverPending ? 'Confirm?' : 'Start Over?'}</button>
+            </div>
+            <button id="closeModal" class="modal-close-btn" title="Close" aria-label="Close">✕</button>
+          </div>
         </header>
         <div class="pizza-summary-bar">
           <span class="pizza-summary-label">Selected</span>
@@ -6987,6 +7311,25 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
               <span>Special Instructions</span>
               ${notesDone ? '<span class="pizza-nav-check" aria-hidden="true">&#10003;</span>' : ''}
             </button>
+            ${prepModifierSet.length ? `
+              <section class="pizza-prep-panel">
+                <small class="pizza-prep-title">PREPS</small>
+                <div class="pizza-prep-grid">
+                  ${prepModifierSet.map((prep) => `
+                    <button
+                      class="pizza-prep-btn ${activePrepModifier?.id === prep.id ? 'active' : ''}"
+                      data-pizza-prep-group="${pizzaGroup.id}"
+                      data-pizza-prep-id="${prep.id}"
+                    >${h(prep.label)}</button>
+                  `).join('')}
+                </div>
+                <small class="pizza-prep-hint ${activePrepModifier ? 'active' : ''}">
+                  ${activePrepModifier
+                    ? `Next topping tap applies ${h(activePrepModifier.label)}`
+                    : 'Tap a prep, then tap a topping'}
+                </small>
+              </section>
+            ` : ''}
           </nav>
           <div class="pizza-content">
             ${activeNav === 'pizza' ? `
@@ -6996,20 +7339,48 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
               </section>
               <section>
                 <h3>Pizza Toppings</h3>
-                <div class="pizza-filter-tabs">
-                  ${['ALL', 'MEATS', 'CHEESES', 'VEGGIES', 'OTHER'].map((tab) => `<button class="pizza-filter-tab ${activeTab === tab ? 'active' : ''}" data-pizza-filter="${tab}">${tab}</button>`).join('')}
+                <div class="pizza-toppings-controls">
+                  <div class="pizza-filter-tabs">
+                    ${['ALL', 'MEATS', 'CHEESES', 'VEGGIES', 'OTHER'].map((tab) => `<button class="pizza-filter-tab ${activeTab === tab ? 'active' : ''}" data-pizza-filter="${tab}">${tab}</button>`).join('')}
+                  </div>
+                  <div class="modifier-search-bar">
+                    <span class="modifier-search-icon" aria-hidden="true">&#128269;</span>
+                    <input
+                      id="modifierSearchInput"
+                      class="modifier-search-input"
+                      type="text"
+                      placeholder="Search toppings..."
+                      value="${h(state.modifierSearch || '')}"
+                      autocomplete="off"
+                      data-keyboard-placement="above"
+                    />
+                    ${(state.modifierSearch || '') ? `<button class="modifier-search-clear" id="modifierSearchClear" aria-label="Clear search">✕</button>` : ''}
+                  </div>
                 </div>
-                <div class="pizza-row-list">
-                  ${filtered.map((option) => {
+                ${(() => {
+                  const searchFiltered = filterModifierOptions(filtered, state.modifierSearch || '');
+                  if (!searchFiltered.length) {
+                    return `<p class="modifier-search-empty muted">No toppings match "${h(state.modifierSearch || '')}"</p>`;
+                  }
+                  return `<div class="pizza-row-list">
+                  ${searchFiltered.map((option) => {
                     const selected = getPizzaSelection(pizzaGroup.id, option.id);
                     const side = selected?.side || pizzaSideFromPreModifier(selected?.preModifierValue) || 'whole';
                     const multiplier = Math.max(1, Math.min(3, Number(selected?.multiplier || 1)));
-                    const livePrice = +(getPizzaUnitPrice(option, item, side, size) * multiplier).toFixed(2);
+                    const storedPrepModifier = normalizeStoredPrepModifier(selected, pizzaGroup);
+                    const previewPrepModifier = activePrepModifier || storedPrepModifier || null;
+                    const displayName = resolvePrepDisplayLabel(option.name, previewPrepModifier);
+                    const livePrice = prepAdjustedModifierPrice(getPizzaUnitPrice(option, item, side, size) * multiplier, previewPrepModifier);
+                    const selectedRowClass = prepSelectedRowClassName(selected?.prepSelectedColorRole);
+                    const selectedStatusText = selected
+                      ? `${h(side.charAt(0).toUpperCase() + side.slice(1))}${multiplier > 1 ? ` · ${multiplier}X` : ''} selected`
+                      : 'Tap for Whole';
+                    const prepPreviewText = activePrepModifier ? ` · ${h(activePrepModifier.label)} preview` : '';
                     return `
-                      <div class="pizza-top-row ${side === 'whole' && selected ? 'whole-selected' : ''}">
+                      <div class="pizza-top-row ${side === 'whole' && selected ? 'whole-selected' : ''} ${selected ? selectedRowClass : ''}">
                         <button class="pizza-top-main" data-pizza-whole="${option.id}">
-                          <span class="pizza-top-name">${h(option.name)}</span>
-                          <span class="pizza-top-sub">${selected ? `${h(side.charAt(0).toUpperCase() + side.slice(1))}${multiplier > 1 ? ` · ${multiplier}X` : ''} selected` : 'Tap for Whole'}</span>
+                          <span class="pizza-top-name">${h(displayName)}</span>
+                          <span class="pizza-top-sub">${selectedStatusText}${prepPreviewText}</span>
                           <span class="pizza-top-price">${money(livePrice)}</span>
                         </button>
                         <div class="pizza-side-controls">
@@ -7020,7 +7391,9 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
                       </div>
                     `;
                   }).join('')}
-                </div>
+                </div>`;
+                })()
+                }
               </section>
             ` : ''}
             ${activeNav === 'prep' ? `${prepGroups.map((g) => renderModifierGroupStandard(g)).join('') || '<section><p class="muted">No prep groups for this item.</p></section>'}` : ''}
@@ -7049,27 +7422,62 @@ function modalHtml(item) {
     return pizzaModifierModalHtml(item, groups, pizzaGroup);
   }
   const size = state.selectedConfig.size || item.sizeSchema?.[0]?.name || null;
+
+  const canUndo = !!(state.modifierDialogHistory?.past?.length);
+  const canRedo = !!(state.modifierDialogHistory?.future?.length);
+  const atInitial = isDialogAtInitialState();
+  const startOverPending = !!state.startOverConfirmPending;
+
   return `
     <div class="modal-backdrop">
       <div class="modal">
         <header>
-          <div>
+          <div class="modal-header-title">
             <h2>${h(item.name)}</h2>
             <p>${h(item.description)}</p>
           </div>
-          <button id="closeModal">x</button>
+          <div class="modal-header-actions">
+            <div class="modal-header-history-actions">
+              <button id="modUndo" class="modal-action-btn mod-btn-icon" ${canUndo ? '' : 'disabled'} title="Undo last change" aria-label="Undo">↩</button>
+              <button id="modRedo" class="modal-action-btn mod-btn-icon" ${canRedo ? '' : 'disabled'} title="Redo" aria-label="Redo">↪</button>
+              <button id="modStartOver" class="modal-action-btn mod-btn-label${startOverPending ? ' start-over-confirm' : ''}" ${atInitial && !startOverPending ? 'disabled' : ''} title="Start Over?">${startOverPending ? 'Confirm?' : 'Start Over?'}</button>
+            </div>
+            <button id="closeModal" class="modal-close-btn" title="Close" aria-label="Close">✕</button>
+          </div>
         </header>
         ${item.sizeSchema ? `<section><h3>Size</h3><div class="chips">${item.sizeSchema.map((s) => `<button class="chip ${size === s.name ? 'active' : ''}" data-size="${h(s.name)}">${h(s.name)} ${money(s.price)}</button>`).join('')}</div></section>` : ''}
         <div class="mod-scroll">
-          ${groups.map((g) => `
+          ${groups.length ? `
+            <div class="modifier-search-bar">
+              <span class="modifier-search-icon" aria-hidden="true">&#128269;</span>
+              <input
+                id="modifierSearchInput"
+                class="modifier-search-input"
+                type="text"
+                placeholder="Search modifiers..."
+                value="${h(state.modifierSearch || '')}"
+                autocomplete="off"
+                data-keyboard-placement="above"
+              />
+              ${(state.modifierSearch || '') ? `<button class="modifier-search-clear" id="modifierSearchClear" aria-label="Clear search">✕</button>` : ''}
+            </div>
+          ` : ''}
+          ${groups.map((g) => {
+            const groupOpts = filterModifierOptions(
+              (state.idx.optsByGroup.get(g.id) || []).slice(0, 48),
+              state.modifierSearch || ''
+            );
+            return `
             <section>
               <h3>${h(g.name)} <small>${h(g.type)} ${g.allowHalf ? '- half/whole' : ''}</small></h3>
               ${preModifierButtonsHtml(g)}
               <div class="chips">
-                ${(state.idx.optsByGroup.get(g.id) || []).slice(0, 48).map((o) => `<button class="chip ${isModSelected(g.id, o.name) ? 'active' : ''}" data-mod-group="${g.id}" data-mod-name="${h(o.name)}">${h(o.name)}${o.price ? ` ${money(o.price)}` : ''}${o.wholePrice ? ` W ${money(o.wholePrice)}` : ''}</button>`).join('')}
+                ${groupOpts.map((o) => `<button class="chip ${isModSelected(g.id, o.name) ? 'active' : ''}" data-mod-group="${g.id}" data-mod-name="${h(o.name)}">${h(o.name)}${o.price ? ` ${money(o.price)}` : ''}${o.wholePrice ? ` W ${money(o.wholePrice)}` : ''}</button>`).join('')}
+                ${groupOpts.length === 0 ? `<span class="modifier-search-empty muted">No options match "${h(state.modifierSearch || '')}"</span>` : ''}
               </div>
             </section>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
         <footer>
           <b>Base ${money(item.fixedPrice ? item.basePrice : item.sizeSchema?.find((s) => s.name === size)?.price || item.basePrice)}</b>
@@ -8269,13 +8677,39 @@ function attachEvents() {
     render();
   });
 
+  $('#modUndo')?.addEventListener('click', () => dialogHistoryUndo());
+  $('#modRedo')?.addEventListener('click', () => dialogHistoryRedo());
+  $('#modStartOver')?.addEventListener('click', () => dialogHistoryStartOver());
+
+  const modSearchInput = $('#modifierSearchInput') as HTMLInputElement | null;
+  modSearchInput?.addEventListener('input', () => {
+    state.modifierSearch = modSearchInput.value;
+    // Re-render to filter; keyboard controller will resync focus
+    render();
+  });
+  $('#modifierSearchClear')?.addEventListener('mousedown', (e) => {
+    e.preventDefault(); // keep focus in search input
+  });
+  $('#modifierSearchClear')?.addEventListener('click', () => {
+    state.modifierSearch = '';
+    const inp = $('#modifierSearchInput') as HTMLInputElement | null;
+    if (inp) { inp.value = ''; inp.focus(); }
+    render();
+  });
+
   $('#closeModal')?.addEventListener('click', () => {
     state.selected = null;
+    state.modifierDialogHistory = null;
+    state.modifierDialogInitialConfig = null;
+    state.startOverConfirmPending = false;
+    state.modifierSearch = '';
+    if (_startOverConfirmTimer) { clearTimeout(_startOverConfirmTimer); _startOverConfirmTimer = null; }
     render();
   });
 
   document.querySelectorAll('[data-size]').forEach((b) => {
     b.addEventListener('click', () => {
+      snapshotDialogState();
       state.selectedConfig.size = b.dataset.size;
       if (state.selected && itemUsesCustomPizzaModifierUi(state.selected)) {
         resizePizzaSelectionPrices(state.selected, state.selectedConfig.size);
@@ -8287,6 +8721,7 @@ function attachEvents() {
   document.querySelectorAll('[data-pizza-nav]').forEach((b) => {
     b.addEventListener('click', () => {
       state.selectedConfig.pizzaNav = b.dataset.pizzaNav;
+      state.modifierSearch = '';
       render();
     });
   });
@@ -8298,12 +8733,28 @@ function attachEvents() {
     });
   });
 
+  document.querySelectorAll('[data-pizza-prep-group]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const groupId = b.dataset.pizzaPrepGroup;
+      const prepId = b.dataset.pizzaPrepId;
+      if (!groupId || !prepId) return;
+      const existing = getActivePrepModifierForGroup(groupId);
+      if (existing?.id === prepId) {
+        clearActivePrepModifierForGroup(groupId);
+      } else {
+        setActivePrepModifierForGroup(groupId, prepId);
+      }
+      render();
+    });
+  });
+
   document.querySelectorAll('[data-pizza-whole]').forEach((b) => {
     b.addEventListener('click', () => {
       const item = state.selected;
       const group = getPizzaToppingGroup(item);
       const option = (state.idx?.optsByGroup?.get(group?.id) || []).find((entry) => entry.id === b.dataset.pizzaWhole);
       if (!group || !option) return;
+      snapshotDialogState();
       togglePizzaSelection(group, option, 'whole');
       render();
     });
@@ -8316,6 +8767,7 @@ function attachEvents() {
       const group = getPizzaToppingGroup(item);
       const option = (state.idx?.optsByGroup?.get(group?.id) || []).find((entry) => entry.id === b.dataset.pizzaOption);
       if (!group || !option) return;
+      snapshotDialogState();
       togglePizzaSelection(group, option, b.dataset.pizzaSide === 'left' ? 'left' : 'right');
       render();
     });
@@ -8328,17 +8780,24 @@ function attachEvents() {
       const group = getPizzaToppingGroup(item);
       const option = (state.idx?.optsByGroup?.get(group?.id) || []).find((entry) => entry.id === b.dataset.pizzaMult);
       if (!group || !option) return;
+      snapshotDialogState();
       cyclePizzaSelectionMultiplier(group, option);
       render();
     });
   });
 
+  $('#pizzaNotesInput')?.addEventListener('focus', () => {
+    snapshotDialogState();
+  });
   $('#pizzaNotesInput')?.addEventListener('input', (e) => {
     state.selectedConfig.pizzaNotes = e.target.value;
   });
 
   document.querySelectorAll('[data-mod-group]').forEach((b) => {
-    b.addEventListener('click', () => toggleMod(b.dataset.modGroup, b.dataset.modName));
+    b.addEventListener('click', () => {
+      snapshotDialogState();
+      toggleMod(b.dataset.modGroup, b.dataset.modName);
+    });
   });
 
   document.querySelectorAll('[data-pre-group]').forEach((b) => {
@@ -8346,6 +8805,7 @@ function attachEvents() {
       const groupId = b.dataset.preGroup;
       const preValue = b.dataset.preValue;
       if (!groupId || !preValue) return;
+      snapshotDialogState();
       state.selectedConfig.preModifiers = state.selectedConfig.preModifiers || {};
       state.selectedConfig.preModifiers[groupId] = preValue;
       render();
