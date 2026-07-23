@@ -438,6 +438,7 @@ const state: any = {
   showCancelConfirm: false,
   managerPinEntry: '',
   managerPinError: '',
+  managerPinInfoMessage: '',
   managerUnlocked: false,
   managerSettingsSection: null,
   keyboardMode: DEFAULT_KEYBOARD_MODE,
@@ -2007,6 +2008,38 @@ function currentCustomerLike() {
   return state.activeCustomer || state.customerDraft || null;
 }
 
+function isTogoLikeOrderType(orderType) {
+  const normalized = String(orderType || '').toLowerCase();
+  return normalized === 'togo' || normalized === 'tostay';
+}
+
+function resolveTogoGuestNameFromOrderLike(orderLike) {
+  const sources = [
+    orderLike?.orderTypeDetails?.togoName,
+    orderLike?.rawSnapshot?.orderTypeDetails?.togoName,
+    orderLike?.payloadSnapshot?.orderTypeDetails?.togoName,
+    orderLike?.sourceSnapshot?.orderTypeDetails?.togoName
+  ];
+  const best = sources.find((value) => String(value || '').trim());
+  return String(best || '').trim();
+}
+
+function resolveOrderDisplayCustomerName(orderLike) {
+  const orderType = String(orderLike?.orderType || '').toLowerCase();
+  const togoGuestName = isTogoLikeOrderType(orderType) ? resolveTogoGuestNameFromOrderLike(orderLike) : '';
+  const sources = [
+    orderLike?.customer?.name,
+    orderLike?.customerSnapshot?.name,
+    orderLike?.customerInfo?.name,
+    orderLike?.customerName,
+    orderLike?.storedDisplayName,
+    orderLike?.displayName,
+    togoGuestName
+  ];
+  const best = sources.find((value) => String(value || '').trim());
+  return String(best || 'Guest').trim();
+}
+
 function openCustomerEditor() {
   if (!state.activeCustomer) return;
   state.customerEditorMode = 'edit';
@@ -2227,8 +2260,9 @@ function paymentPaneOrderTypeLabel(orderType: string) {
 
 function paymentPaneCustomerSummary() {
   const customer = currentCustomerLike() || {};
+  const togoGuestName = isTogoLikeOrderType(state.orderType) ? String(state.orderTypeDetails?.togoName || '').trim() : '';
   return {
-    name: String(customer.name || '').trim() || '',
+    name: String(customer.name || togoGuestName || '').trim() || '',
     phone: phoneDisplayValue(normalizePhone(customer.phone || '')) || ''
   };
 }
@@ -3044,6 +3078,8 @@ async function completePayNowOrder() {
     payloadSnapshot: payload
   };
 
+  const displayCustomerName = resolveOrderDisplayCustomerName(persistedOrder);
+
   try {
     const snapshot = await lilposDataService.saveOrderHistorySnapshot({
       orderId: persistedOrder.id,
@@ -3053,7 +3089,7 @@ async function completePayNowOrder() {
       orderType: persistedOrder.orderType,
       orderStatus: persistedOrder.status,
       paymentStatus: persistedOrder.paymentStatus,
-      storedDisplayName: persistedOrder.customer?.name || 'Guest',
+      storedDisplayName: displayCustomerName,
       storedPhone: persistedOrder.customer?.phone || '',
       storedAddressSummary: persistedOrder.customer?.address1 || '',
       subtotal: persistedOrder.subtotal,
@@ -3186,6 +3222,8 @@ async function completePayLaterOrder() {
     payloadSnapshot: payload
   };
 
+  const displayCustomerName = resolveOrderDisplayCustomerName(persistedOrder);
+
   try {
     const snapshot = await lilposDataService.saveOrderHistorySnapshot({
       orderId: persistedOrder.id,
@@ -3195,7 +3233,7 @@ async function completePayLaterOrder() {
       orderType: persistedOrder.orderType,
       orderStatus: persistedOrder.status,
       paymentStatus: persistedOrder.paymentStatus,
-      storedDisplayName: persistedOrder.customer?.name || 'Guest',
+      storedDisplayName: displayCustomerName,
       storedPhone: persistedOrder.customer?.phone || '',
       storedAddressSummary: persistedOrder.customer?.address1 || '',
       subtotal: persistedOrder.subtotal,
@@ -4694,7 +4732,7 @@ function filteredOrderManagementRows(options: any = {}) {
   const persistedRows = persistedOrders().map((order) => ({
     id: order.id,
     number: order.orderNumber,
-    customerName: order.customer?.name || 'Guest',
+    customerName: resolveOrderDisplayCustomerName(order),
     orderType: order.orderType,
     status: normalizeOrderStatus(order),
     source: order.orderSource,
@@ -4762,6 +4800,7 @@ function resolveStoredOrderIdentity(order) {
   const candidates = [
     order?.customer?.name,
     order?.customerName,
+    resolveTogoGuestNameFromOrderLike(order),
     order?.customerLabel,
     order?.orderLabel,
     order?.orderIdentity,
@@ -4853,6 +4892,7 @@ function selectedOrderPaymentBadge(order) {
 function buildPaymentPaneInputForOrderContext(order, context: OrderPaymentContext) {
   const customer = order?.customer || {};
   const lines = Array.isArray(order?.lines) ? order.lines : [];
+  const displayCustomerName = resolveOrderDisplayCustomerName({ ...order, customer });
   const remainingCents = Math.max(0, Number(context.remainingBalanceCents || 0));
   const totalCents = Math.max(0, Math.round(Number(order?.total || 0) * 100));
   const subtotalCents = Math.max(0, Math.round(Number(order?.subtotal || 0) * 100));
@@ -4870,7 +4910,7 @@ function buildPaymentPaneInputForOrderContext(order, context: OrderPaymentContex
     paymentsAppliedCents: paidCents,
     remainingBalanceCents: remainingCents,
     customer: {
-      name: String(customer?.name || order?.customerName || '').trim() || 'Guest',
+      name: displayCustomerName,
       phone: phoneDisplayValue(normalizePhone(customer?.phone || '')) || ''
     },
     items: lines.map((line) => {
@@ -5177,7 +5217,12 @@ function selectedOrderForDetail() {
     || persistedOrders().find((entry) => entry.id === state.selectedOrderId)
     || null;
   if (persistedOrder) {
-    const customer = resolveOrderCustomerSnapshot(persistedOrder);
+    const customerSnapshot = resolveOrderCustomerSnapshot(persistedOrder);
+    const displayCustomerName = resolveOrderDisplayCustomerName({ ...persistedOrder, customer: customerSnapshot });
+    const customer = {
+      ...customerSnapshot,
+      name: String(customerSnapshot?.name || '').trim() || displayCustomerName
+    };
     const lines = Array.isArray(persistedOrder.lines) ? persistedOrder.lines : [];
     const status = normalizeOrderStatus(persistedOrder);
     const totalCents = Math.max(0, Math.round(Number(persistedOrder.total || 0) * 100));
@@ -5190,7 +5235,7 @@ function selectedOrderForDetail() {
     return {
       id: persistedOrder.id,
       number: persistedOrder.orderNumber,
-      customerName: customer.name || 'Guest',
+      customerName: displayCustomerName,
       customerLabel: persistedOrder.customerLabel || persistedOrder.rawSnapshot?.customerLabel || '',
       orderLabel: persistedOrder.orderLabel || persistedOrder.rawSnapshot?.orderLabel || '',
       orderIdentity: persistedOrder.orderIdentity || persistedOrder.rawSnapshot?.orderIdentity || '',
@@ -6024,6 +6069,8 @@ function ticketPayload(kind: any): any {
     };
   });
 
+  const togoGuestName = isTogoLikeOrderType(state.orderType) ? String(state.orderTypeDetails?.togoName || '').trim() : '';
+
   return {
     ticketId: `TEMP-${Date.now()}`,
     mode: 'PRINT_ONLY',
@@ -6047,7 +6094,7 @@ function ticketPayload(kind: any): any {
     },
     customer: {
       id: state.activeCustomer?.id || null,
-      name: state.activeCustomer?.name || state.customerDraft.name || state.customerName,
+      name: state.activeCustomer?.name || state.customerDraft.name || state.customerName || togoGuestName,
       phone: normalizePhone(state.activeCustomer?.phone || state.customerDraft.phone || state.customerPhone),
       address1: state.activeCustomer?.address1 || state.customerDraft.address1,
       city: state.activeCustomer?.city || state.customerDraft.city,
@@ -6641,7 +6688,8 @@ function navIcon(name) {
     gift: '<rect x="4" y="8" width="16" height="12" rx="2"></rect><path d="M12 8v12"></path><path d="M4 12h16"></path><path d="M12 8c-1.8 0-3.2-1.2-3.2-2.7S10 3 12 5.4C14 3 15.2 3.8 15.2 5.3S13.8 8 12 8z"></path>',
     split: '<path d="M12 4v16"></path><path d="M4 8h7"></path><path d="M13 16h7"></path><path d="M6 6l-2 2 2 2"></path><path d="M18 14l2 2-2 2"></path>',
     link: '<path d="M10.5 13.5l3-3"></path><path d="M8.2 15.8l-1.4 1.4a3 3 0 0 1-4.2-4.2l2.1-2.1a3 3 0 0 1 4.2 0"></path><path d="M15.8 8.2l1.4-1.4a3 3 0 1 1 4.2 4.2l-2.1 2.1a3 3 0 0 1-4.2 0"></path>',
-    payment: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18"></path><path d="M7 15h3"></path><path d="M12 15h5"></path>'
+    payment: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18"></path><path d="M7 15h3"></path><path d="M12 15h5"></path>',
+    'face-scan': '<path d="M4 8V6a2 2 0 0 1 2-2h2"></path><path d="M20 8V6a2 2 0 0 0-2-2h-2"></path><path d="M4 16v2a2 2 0 0 0 2 2h2"></path><path d="M20 16v2a2 2 0 0 1-2 2h-2"></path><circle cx="12" cy="11" r="2.6"></circle><path d="M8.5 16c.9-1.8 2-2.6 3.5-2.6s2.6.8 3.5 2.6"></path>'
   };
   return `<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
 }
@@ -6915,10 +6963,20 @@ function renderManagerPinView() {
   return `
     <div class="mgr-pin-view">
       <div class="mgr-pin-card">
+        <button
+          id="mgrPinFaceId"
+          type="button"
+          class="mgr-pin-faceid-btn"
+          title="Sign in using Face ID"
+          aria-label="Sign in using Face ID"
+        >
+          <span class="icon-glyph">${navIcon('face-scan')}</span>
+        </button>
         <h2 class="mgr-pin-title">Manager Access</h2>
         <p class="mgr-pin-instruction">Enter manager PIN</p>
         <div class="mgr-pin-display" aria-label="PIN entry">${dots}</div>
         ${state.managerPinError ? `<div class="mgr-pin-error">${h(state.managerPinError)}</div>` : ''}
+        ${state.managerPinInfoMessage ? `<div class="mgr-pin-info" aria-live="polite">${h(state.managerPinInfoMessage)}</div>` : ''}
         <div class="mgr-pin-keypad">
           ${[1,2,3,4,5,6,7,8,9].map((d) => `<button class="mgr-pin-key" data-pin-digit="${d}">${d}</button>`).join('')}
           <button class="mgr-pin-key mgr-pin-key-action" data-pin-clear>Clear</button>
@@ -7466,7 +7524,7 @@ function scheduleDialogHtml() {
   if (!state.scheduleDialog.open) return '';
   return `
     <div class="modal-backdrop">
-      <div class="call-modal">
+      <div class="call-modal future-order-modal">
         <h3>Future Order</h3>
         <p>Choose when this order should be ready/requested.</p>
         <div class="schedule-grid">
@@ -8230,14 +8288,18 @@ function render() {
   }
 
   if (state.focusOrderTypeDraftNameOnRender && state.orderTypeDraftDialog?.open && state.orderTypeDraftDialog?.type === 'togo') {
-    state.focusOrderTypeDraftNameOnRender = false;
-    requestAnimationFrame(() => {
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (cb) => window.setTimeout(cb, 0);
+    schedule(() => {
       const input = document.querySelector('#togoDraftName') as HTMLInputElement | null;
       if (!input) return;
       input.focus({ preventScroll: true });
       const end = input.value.length;
       if (typeof input.setSelectionRange === 'function') input.setSelectionRange(end, end);
       keyboardController.showKeyboardForInput(input, { source: 'togo-draft-open' });
+      // Clear only after successful focus so a missed frame will retry next render.
+      state.focusOrderTypeDraftNameOnRender = false;
     });
   }
 
@@ -8394,6 +8456,7 @@ function attachEvents() {
     } else {
       state.managerPinEntry = '';
       state.managerPinError = '';
+      state.managerPinInfoMessage = '';
       state.mainView = MAIN_VIEWS.managerPin;
     }
     render();
@@ -8403,7 +8466,24 @@ function attachEvents() {
     state.mainView = MAIN_VIEWS.menu;
     state.managerPinEntry = '';
     state.managerPinError = '';
+    state.managerPinInfoMessage = '';
     render();
+  });
+
+  const triggerManagerFaceIdPlaceholder = () => {
+    state.managerPinInfoMessage = 'Face ID sign-in is not available yet.';
+    render();
+  };
+
+  $('#mgrPinFaceId')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    triggerManagerFaceIdPlaceholder();
+  });
+
+  $('#mgrPinFaceId')?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    triggerManagerFaceIdPlaceholder();
   });
 
   document.querySelectorAll('[data-pin-digit]').forEach((b) => {
@@ -8411,6 +8491,7 @@ function attachEvents() {
       if (state.managerPinEntry.length >= 4) return;
       state.managerPinEntry += (b as HTMLElement).dataset.pinDigit || '';
       state.managerPinError = '';
+      state.managerPinInfoMessage = '';
       if (state.managerPinEntry.length === 4) {
         if (state.managerPinEntry === DEFAULT_MANAGER_PIN) {
           state.managerUnlocked = true;
@@ -8418,6 +8499,7 @@ function attachEvents() {
           state.managerSettingsSection = null;
           state.managerPinEntry = '';
           state.managerPinError = '';
+          state.managerPinInfoMessage = '';
         } else {
           state.managerPinError = 'Incorrect PIN';
           state.managerPinEntry = '';
@@ -8430,12 +8512,14 @@ function attachEvents() {
   document.querySelector('[data-pin-clear]')?.addEventListener('click', () => {
     state.managerPinEntry = '';
     state.managerPinError = '';
+    state.managerPinInfoMessage = '';
     render();
   });
 
   document.querySelector('[data-pin-back]')?.addEventListener('click', () => {
     state.managerPinEntry = state.managerPinEntry.slice(0, -1);
     state.managerPinError = '';
+    state.managerPinInfoMessage = '';
     render();
   });
 
@@ -8459,6 +8543,7 @@ function attachEvents() {
     state.managerUnlocked = false;
     state.managerPinEntry = '';
     state.managerPinError = '';
+    state.managerPinInfoMessage = '';
     state.mainView = MAIN_VIEWS.menu;
     render();
   });

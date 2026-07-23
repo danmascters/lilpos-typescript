@@ -198,4 +198,5 @@ describe('To-Go guest summary edit pencil', () => {
       app.dom.window.close();
     }
   });
+
 });
