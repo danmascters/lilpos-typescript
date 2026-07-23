@@ -347,6 +347,21 @@ function normalizeOrderStatus(order) {
   return paid ? 'completed' : 'open';
 }
 
+function ordersManagementViewApi() {
+  return window.LilposOrdersManagement || null;
+}
+
+function defaultOrdersManagementViewPreferences() {
+  const api = ordersManagementViewApi();
+  if (api?.normalizePreferences) return api.normalizePreferences(null);
+  return {
+    open: 'STANDARD',
+    completed: 'STANDARD',
+    onlineOnly: 'STANDARD',
+    futureOrders: 'STANDARD'
+  };
+}
+
 function isStandaloneMode() {
   return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
 }
@@ -364,6 +379,9 @@ const state: any = {
   mainView: MAIN_VIEWS.menu,
   ordersFilter: ORDER_MGMT_FILTERS.open,
   ordersQuery: '',
+  ordersViewPreferences: defaultOrdersManagementViewPreferences(),
+  ordersColumnDragSource: null,
+  ordersColumnDragSuppressClickUntil: 0,
   customersQuery: '',
   selectedOrderId: null,
   previousOrderAuditExpanded: false,
@@ -4554,6 +4572,7 @@ function ensureActiveCategory() {
 
 async function loadFromDb() {
   await lilposDataService.ensureHistoryPersistenceReady();
+  await hydrateOrdersManagementViewPreferences();
   await refreshPersistedOrdersCache({ refreshNextOrderNumber: true, renderAfter: false });
   const t0 = performance.now();
   const cached = await lilposDataService.getRuntimeCache('activeMenu');
@@ -4724,43 +4743,216 @@ function orderQueueChips() {
   ];
 }
 
+function ordersManagementRowCustomerDetails(order) {
+  const customer = resolveOrderCustomerSnapshot(order);
+  return {
+    customerPhone: phoneDisplayValue(customer?.phone || ''),
+    customerAddress: customerAddressText(customer)
+  };
+}
+
+function ordersManagementReceivedTimeLabel(order) {
+  const createdTs = order?.createdTimestamp;
+  if (createdTs) {
+    const parsed = new Date(createdTs);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+  }
+  return String(order?.timeLabel || '').trim();
+}
+
+function ordersManagementDueTimeLabel(order) {
+  const timingType = String(order?.timingType || '').toLowerCase();
+  if (timingType === 'future' && order?.futureDateTime) {
+    return formatFutureLabel(order.futureDateTime) || 'Future';
+  }
+  const asapTime = String(order?.asapTime || '').trim();
+  if (asapTime) {
+    const label = formatTimeValueLabel(asapTime);
+    return label ? `ASAP ${label}` : 'ASAP';
+  }
+  return 'ASAP';
+}
+
+function ordersManagementDueTimestamp(order) {
+  const timingType = String(order?.timingType || '').toLowerCase();
+  if (timingType === 'future' && order?.futureDateTime) {
+    const parsed = new Date(order.futureDateTime);
+    return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+  }
+  const asapTime = String(order?.asapTime || '').trim();
+  if (asapTime) {
+    const parsed = parseLocalDateTime(nowLocalParts().date, asapTime);
+    return parsed ? parsed.getTime() : 0;
+  }
+  return 0;
+}
+
+function currentOrdersManagementViewMode() {
+  const api = ordersManagementViewApi();
+  if (api?.viewModeForQueue) {
+    return api.viewModeForQueue(state.ordersViewPreferences, state.ordersFilter);
+  }
+  return 'STANDARD';
+}
+
+async function hydrateOrdersManagementViewPreferences() {
+  const api = ordersManagementViewApi();
+  const fallback = defaultOrdersManagementViewPreferences();
+  if (!lilposDataService?.loadOrdersManagementViewPreferences) {
+    state.ordersViewPreferences = fallback;
+    return;
+  }
+  try {
+    const preferences = await lilposDataService.loadOrdersManagementViewPreferences();
+    state.ordersViewPreferences = api?.normalizePreferences ? api.normalizePreferences(preferences) : preferences || fallback;
+  } catch (err) {
+    console.error('Failed to load orders management view preferences:', err);
+    state.ordersViewPreferences = fallback;
+  }
+}
+
+async function persistOrdersManagementViewPreferences(preferences) {
+  if (!lilposDataService?.saveOrdersManagementViewPreferences) return;
+  try {
+    await lilposDataService.saveOrdersManagementViewPreferences(preferences);
+  } catch (err) {
+    console.error('Failed to save orders management view preferences:', err);
+  }
+}
+
+function setOrdersManagementViewModeForActiveQueue(viewMode) {
+  const api = ordersManagementViewApi();
+  const nextPreferences = api?.setViewModeForQueue
+    ? api.setViewModeForQueue(state.ordersViewPreferences, state.ordersFilter, viewMode)
+    : defaultOrdersManagementViewPreferences();
+  state.ordersViewPreferences = nextPreferences;
+  void persistOrdersManagementViewPreferences(nextPreferences);
+}
+
+function currentOrdersManagementColumnLayout() {
+  const api = ordersManagementViewApi();
+  if (api?.columnLayoutForQueue) {
+    return api.columnLayoutForQueue(state.ordersViewPreferences, state.ordersFilter);
+  }
+  return { order: [], sort: null };
+}
+
+function setOrdersManagementSortForActiveQueue(columnId) {
+  const api = ordersManagementViewApi();
+  if (!api?.setSortForQueue) return;
+  const nextPreferences = api.setSortForQueue(state.ordersViewPreferences, state.ordersFilter, columnId);
+  state.ordersViewPreferences = nextPreferences;
+  void persistOrdersManagementViewPreferences(nextPreferences);
+}
+
+function moveOrdersManagementColumnForActiveQueue(sourceColumnId, targetColumnId) {
+  const api = ordersManagementViewApi();
+  if (!api?.moveColumnForQueue) return;
+  const nextPreferences = api.moveColumnForQueue(state.ordersViewPreferences, state.ordersFilter, sourceColumnId, targetColumnId);
+  state.ordersViewPreferences = nextPreferences;
+  void persistOrdersManagementViewPreferences(nextPreferences);
+}
+
+function ordersManagementSortValue(order, columnId) {
+  if (columnId === 'order') return String(formatOrderNumberForDisplay(order.number || '')).toLowerCase();
+  if (columnId === 'customer') return String(order.customerName || '').toLowerCase();
+  if (columnId === 'phone') return String(order.customerPhone || '').toLowerCase();
+  if (columnId === 'type') return String(ORDER_TYPES[order.orderType] || order.orderType || '').toLowerCase();
+  if (columnId === 'receivedTime') return new Date(order.createdTimestamp || 0).getTime() || String(order.receivedTimeLabel || order.timeLabel || '').toLowerCase();
+  if (columnId === 'dueTime') return order.dueTimestamp || String(order.dueTimeLabel || '').toLowerCase();
+  if (columnId === 'source') return String(order.onlineOnly ? 'online only' : order.source || '').toLowerCase();
+  if (columnId === 'payment') return String(order.paymentStatus || (order.paid ? 'paid' : 'unpaid')).toLowerCase();
+  if (columnId === 'status') return String(order.status || '').toLowerCase();
+  if (columnId === 'total') return Number(order.total || 0);
+  return '';
+}
+
+function sortOrdersManagementRows(rows, layout) {
+  const sort = layout?.sort;
+  if (!sort?.columnId) return rows;
+  const direction = sort.direction === 'desc' ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const aValue = ordersManagementSortValue(a, sort.columnId);
+    const bValue = ordersManagementSortValue(b, sort.columnId);
+    let result = 0;
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      result = aValue - bValue;
+    } else {
+      result = String(aValue ?? '').localeCompare(String(bValue ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+    }
+    if (result === 0) {
+      result = String(a.id || '').localeCompare(String(b.id || ''), undefined, { numeric: true, sensitivity: 'base' });
+    }
+    return result * direction;
+  });
+}
+
+function ordersManagementHiddenColumnIds() {
+  const width = Number(window.innerWidth || 0);
+  const hidden = [];
+  if (width && width <= 1460) hidden.push('source');
+  if (width && width <= 1280) hidden.push('status');
+  if (width && width <= 1220) hidden.push('type');
+  return hidden;
+}
+
 function filteredOrderManagementRows(options: any = {}) {
   const queueFilter = options.queueFilter || state.ordersFilter;
   const applyQuery = options.applyQuery !== false;
   const q = applyQuery ? String(state.ordersQuery || '').trim().toLowerCase() : '';
   const nowTs = Date.now();
-  const persistedRows = persistedOrders().map((order) => ({
-    id: order.id,
-    number: order.orderNumber,
-    customerName: resolveOrderDisplayCustomerName(order),
-    orderType: order.orderType,
-    status: normalizeOrderStatus(order),
-    source: order.orderSource,
-    onlineOnly: String(order.orderSource || '').toLowerCase() === 'online',
-    timeLabel: order.timingType === 'future' && order.futureDateTime
-      ? `Future: ${formatFutureLabel(order.futureDateTime)}`
-      : new Date(order.createdTimestamp).toLocaleTimeString(),
-    createdTimestamp: order.createdTimestamp,
-    timingType: order.timingType || 'asap',
-    futureDateTime: order.futureDateTime || null,
-    total: Number(order.total || 0),
-    paymentStatus: order.paymentStatus,
-    paid: !!order.paid,
-    isPersisted: true
-  }));
+  const persistedRows = persistedOrders().map((order) => {
+    const customerDetails = ordersManagementRowCustomerDetails(order);
+    return {
+      id: order.id,
+      number: order.orderNumber,
+      customerName: resolveOrderDisplayCustomerName(order),
+      customerPhone: customerDetails.customerPhone,
+      customerAddress: customerDetails.customerAddress,
+      orderType: order.orderType,
+      status: normalizeOrderStatus(order),
+      source: order.orderSource,
+      onlineOnly: String(order.orderSource || '').toLowerCase() === 'online',
+      timeLabel: order.timingType === 'future' && order.futureDateTime
+        ? `Future: ${formatFutureLabel(order.futureDateTime)}`
+        : new Date(order.createdTimestamp).toLocaleTimeString(),
+      receivedTimeLabel: ordersManagementReceivedTimeLabel(order),
+      dueTimeLabel: ordersManagementDueTimeLabel(order),
+      dueTimestamp: ordersManagementDueTimestamp(order),
+      createdTimestamp: order.createdTimestamp,
+      timingType: order.timingType || 'asap',
+      asapTime: order.asapTime || null,
+      futureDateTime: order.futureDateTime || null,
+      total: Number(order.total || 0),
+      paymentStatus: order.paymentStatus,
+      paid: !!order.paid,
+      isPersisted: true
+    };
+  });
 
-  const legacyRows = (state.mockOrders || []).map((order) => ({
-    ...order,
-    status: normalizeOrderStatus(order),
-    paymentStatus: order.paymentStatus || (order.status === 'completed' ? 'paid' : 'unpaid'),
-    paid: typeof order.paid === 'boolean' ? order.paid : order.status === 'completed',
-    timeLabel: order.timingType === 'future' && order.futureDateTime
-      ? `Future: ${formatFutureLabel(order.futureDateTime)}`
-      : order.timeLabel,
-    timingType: order.timingType || 'asap',
-    futureDateTime: order.futureDateTime || null,
-    isPersisted: false
-  }));
+  const legacyRows = (state.mockOrders || []).map((order) => {
+    const customerDetails = ordersManagementRowCustomerDetails(order);
+    return {
+      ...order,
+      customerPhone: order.customerPhone || customerDetails.customerPhone,
+      customerAddress: order.customerAddress || customerDetails.customerAddress,
+      status: normalizeOrderStatus(order),
+      paymentStatus: order.paymentStatus || (order.status === 'completed' ? 'paid' : 'unpaid'),
+      paid: typeof order.paid === 'boolean' ? order.paid : order.status === 'completed',
+      timeLabel: order.timingType === 'future' && order.futureDateTime
+        ? `Future: ${formatFutureLabel(order.futureDateTime)}`
+        : order.timeLabel,
+      receivedTimeLabel: ordersManagementReceivedTimeLabel(order),
+      dueTimeLabel: ordersManagementDueTimeLabel(order),
+      dueTimestamp: ordersManagementDueTimestamp(order),
+      timingType: order.timingType || 'asap',
+      asapTime: order.asapTime || null,
+      futureDateTime: order.futureDateTime || null,
+      isPersisted: false
+    };
+  });
 
   const allOrders = dedupeOrderRows([...persistedRows, ...legacyRows]);
 
@@ -6898,20 +7090,26 @@ function renderCustomerManagementView() {
   `;
 }
 
-function renderOrderTile(order) {
-  const typeLabel = ORDER_TYPES[order.orderType] || order.orderType;
+function orderManagementPaymentBadge(order, partialLabel = 'PARTIAL') {
   const paymentStatus = String(order.paymentStatus || '').toLowerCase();
   const paid = !!order.paid || paymentStatus === 'paid';
   const remainingCents = selectedOrderRemainingBalanceCents(order);
   const totalCents = Math.max(0, Math.round(Number(order.total || 0) * 100));
   const partial = !paid && remainingCents > 0 && remainingCents < totalCents;
-  const paidClass = paid ? 'paid' : (partial ? 'partial' : 'unpaid');
-  const paidText = paid ? 'PAID' : (partial ? 'PARTIAL' : 'NOT PAID');
+  return {
+    paidClass: paid ? 'paid' : (partial ? 'partial' : 'unpaid'),
+    paidText: paid ? 'PAID' : (partial ? partialLabel : 'NOT PAID')
+  };
+}
+
+function renderOrderTile(order) {
+  const typeLabel = ORDER_TYPES[order.orderType] || order.orderType;
+  const paymentBadge = orderManagementPaymentBadge(order);
   const displayNumber = formatOrderNumberForDisplay(order.number);
   return `
     <button class="order-mgmt-tile" data-open-order="${order.id}">
       <div class="order-tile-badge-row">
-        <span class="order-payment-badge ${paidClass}">${paidText}</span>
+        <span class="order-payment-badge ${paymentBadge.paidClass}">${paymentBadge.paidText}</span>
       </div>
       <div class="order-mgmt-top">
         <b>#${h(displayNumber)}</b>
@@ -6929,9 +7127,41 @@ function renderOrderTile(order) {
   `;
 }
 
+function renderOrderManagementRows(rows, columnLayout) {
+  const api = ordersManagementViewApi();
+  if (!api?.renderOrderRows) {
+    return `
+      <div class="orders-mgmt-grid">
+        ${rows.length ? rows.map((order) => renderOrderTile(order)).join('') : '<p class="muted">No matching orders for this filter.</p>'}
+      </div>
+    `;
+  }
+
+  return api.renderOrderRows({
+    rows,
+    orderTypes: ORDER_TYPES,
+    h,
+    money,
+    formatOrderNumberForDisplay,
+    paymentBadgeForOrder: (order) => orderManagementPaymentBadge(order, 'PARTIALLY PAID'),
+    columnLayout,
+    hiddenColumnIds: ordersManagementHiddenColumnIds()
+  });
+}
+
 function renderOrdersManagementView() {
-  const rows = filteredOrderManagementRows();
+  const columnLayout = currentOrdersManagementColumnLayout();
+  const rows = sortOrdersManagementRows(filteredOrderManagementRows(), columnLayout);
   const chips = orderQueueChips();
+  const activeViewMode = currentOrdersManagementViewMode();
+  const viewSwitchHtml = ordersManagementViewApi()?.renderViewModeSwitch
+    ? ordersManagementViewApi().renderViewModeSwitch({ activeMode: activeViewMode, h })
+    : '';
+  const resultsHtml = activeViewMode === 'ROWS'
+    ? renderOrderManagementRows(rows, columnLayout)
+    : `<div class="orders-mgmt-grid">
+        ${rows.length ? rows.map((order) => renderOrderTile(order)).join('') : '<p class="muted">No matching orders for this filter.</p>'}
+      </div>`;
   return `
     <section class="menu-board center-view orders-mgmt-view">
       <div class="view-head">
@@ -6951,9 +7181,10 @@ function renderOrdersManagementView() {
           </button>
         `).join('')}
       </div>
-      <div class="orders-mgmt-grid">
-        ${rows.length ? rows.map((order) => renderOrderTile(order)).join('') : '<p class="muted">No matching orders for this filter.</p>'}
+      <div class="orders-view-toolbar">
+        ${viewSwitchHtml}
       </div>
+      ${rows.length ? resultsHtml : `<div class="${activeViewMode === 'ROWS' ? 'orders-mgmt-rows is-empty' : 'orders-mgmt-grid'}"><p class="muted">No matching orders for this filter.</p></div>`}
     </section>
   `;
 }
@@ -8705,6 +8936,60 @@ function attachEvents() {
     });
   });
 
+  document.querySelectorAll('[data-orders-view-mode]').forEach((b) => {
+    b.addEventListener('click', () => {
+      setOrdersManagementViewModeForActiveQueue(b.dataset.ordersViewMode || 'STANDARD');
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-orders-sort-column]').forEach((b) => {
+    b.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (Date.now() < Number(state.ordersColumnDragSuppressClickUntil || 0)) return;
+      setOrdersManagementSortForActiveQueue(b.dataset.ordersSortColumn);
+      render();
+    });
+
+    b.addEventListener('dragstart', (event) => {
+      const dragEvent = event as DragEvent;
+      const columnId = b.dataset.ordersColumnId || b.dataset.ordersSortColumn || '';
+      state.ordersColumnDragSource = columnId;
+      dragEvent.dataTransfer?.setData('text/plain', columnId);
+      if (dragEvent.dataTransfer) dragEvent.dataTransfer.effectAllowed = 'move';
+    });
+
+    b.addEventListener('dragover', (event) => {
+      const dragEvent = event as DragEvent;
+      if (!state.ordersColumnDragSource) return;
+      event.preventDefault();
+      b.classList.add('is-drag-over');
+      if (dragEvent.dataTransfer) dragEvent.dataTransfer.dropEffect = 'move';
+    });
+
+    b.addEventListener('dragleave', () => {
+      b.classList.remove('is-drag-over');
+    });
+
+    b.addEventListener('drop', (event) => {
+      const dragEvent = event as DragEvent;
+      event.preventDefault();
+      b.classList.remove('is-drag-over');
+      const sourceColumnId = dragEvent.dataTransfer?.getData('text/plain') || state.ordersColumnDragSource;
+      const targetColumnId = b.dataset.ordersColumnId || b.dataset.ordersSortColumn || '';
+      state.ordersColumnDragSource = null;
+      state.ordersColumnDragSuppressClickUntil = Date.now() + 300;
+      if (!sourceColumnId || !targetColumnId || sourceColumnId === targetColumnId) return;
+      moveOrdersManagementColumnForActiveQueue(sourceColumnId, targetColumnId);
+      render();
+    });
+
+    b.addEventListener('dragend', () => {
+      state.ordersColumnDragSource = null;
+      b.classList.remove('is-drag-over');
+    });
+  });
+
   document.querySelectorAll('[data-customer-select]').forEach((b) => {
     b.addEventListener('click', () => {
       const customer = (state.mockCustomers || []).find((entry) => entry.id === b.dataset.customerSelect);
@@ -9307,6 +9592,11 @@ function attachEvents() {
       const raw = (b as HTMLElement).dataset.lilpayQuick || '';
       if (raw === 'exact') {
         state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-exact' });
+        const isFooterExactAction = (b as HTMLElement).classList.contains('lilpay-action-btn');
+        if (isFooterExactAction) {
+          void handlePaymentPanePrimaryAction();
+          return;
+        }
       } else {
         state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
           type: 'cash-set-amount',

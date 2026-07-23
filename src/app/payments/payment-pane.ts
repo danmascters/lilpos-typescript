@@ -122,8 +122,16 @@ function displayOrderMeta(input: PaymentPaneInput): string {
   return `Order ${displayOrderNumber(input.displayOrderNumber)} • ${input.orderTypeLabel} • ${input.stationName}`;
 }
 
+function exactChangeActionLabel(state: PaymentPaneState): string {
+  const dueCents = state.splitProcessingAmountCents > 0
+    ? Math.max(0, Number(state.splitProcessingAmountCents || 0))
+    : Math.max(0, Number(state.remainingBalanceCents || 0));
+  return `Exact Change ${formatCents(dueCents)}`;
+}
+
 function renderPane(input: PaymentPaneInput, state: PaymentPaneState): string {
   const splitHasBalance = state.selectedPaymentMethod === 'split' && !!state.splitWorkspace && state.splitWorkspace.remainingCents > 0;
+  const showExactChangeAction = state.selectedPaymentMethod === 'cash' && !splitHasBalance;
   return `
     <div class="lilpay-pane" data-lilpay-open="1">
       <div class="lilpay-main">
@@ -148,6 +156,7 @@ function renderPane(input: PaymentPaneInput, state: PaymentPaneState): string {
           <button type="button" class="lilpay-action-btn" data-lilpay-back="1">Back</button>
           ${splitHasBalance ? '' : '<button type="button" class="lilpay-action-btn" data-lilpay-send-unpaid="1">Send Unpaid</button>'}
           ${splitHasBalance ? '' : '<button type="button" class="lilpay-action-btn" data-lilpay-pay-send="1">Pay & Send</button>'}
+          ${showExactChangeAction ? `<button type="button" class="lilpay-action-btn lilpay-quick-exact" data-lilpay-quick="exact">${exactChangeActionLabel(state)}</button>` : ''}
           <button
             type="button"
             class="lilpay-action-btn lilpay-action-primary"

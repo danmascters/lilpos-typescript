@@ -102,6 +102,7 @@
     var STORE_SPLIT_PAYMENT_PORTION = 'split_payment_portion';
 
     var LEGACY_IMPORT_META_KEY = 'legacy_order_import_v1';
+    var ORDERS_MANAGEMENT_VIEW_PREFS_KEY = 'orders_management_view_preferences_v1';
 
     var historyBootPromise: Promise<any> | null = null;
 
@@ -137,6 +138,64 @@
       var stationPattern = raw.match(/^(\d+)-0*(\d+)$/);
       if (stationPattern) return stationPattern[1] + '-' + String(Number(stationPattern[2]));
       return raw;
+    }
+
+    function normalizeOrdersQueueViewMode(value: any): string {
+      return String(value || '').toUpperCase() === 'ROWS' ? 'ROWS' : 'STANDARD';
+    }
+
+    var ORDERS_QUEUE_PREF_KEYS = ['open', 'completed', 'onlineOnly', 'futureOrders'];
+    var ORDERS_ROW_COLUMN_IDS = ['order', 'customer', 'phone', 'type', 'receivedTime', 'dueTime', 'source', 'payment', 'status', 'total'];
+
+    function normalizeOrdersRowColumnOrder(input: any): string[] {
+      var seen: any = {};
+      var order = Array.isArray(input)
+        ? input.filter(function(columnId) {
+            var id = String(columnId || '');
+            if (ORDERS_ROW_COLUMN_IDS.indexOf(id) < 0 || seen[id]) return false;
+            seen[id] = true;
+            return true;
+          }).map(function(columnId) { return String(columnId); })
+        : [];
+      ORDERS_ROW_COLUMN_IDS.forEach(function(columnId) {
+        if (!seen[columnId]) order.push(columnId);
+      });
+      return order;
+    }
+
+    function normalizeOrdersRowColumnSort(input: any): any {
+      var columnId = String(input && input.columnId || '');
+      if (ORDERS_ROW_COLUMN_IDS.indexOf(columnId) < 0) return null;
+      return {
+        columnId: columnId,
+        direction: String(input && input.direction || '').toLowerCase() === 'desc' ? 'desc' : 'asc'
+      };
+    }
+
+    function normalizeOrdersQueueColumnLayout(input: any): any {
+      return {
+        order: normalizeOrdersRowColumnOrder(input && input.order),
+        sort: normalizeOrdersRowColumnSort(input && input.sort)
+      };
+    }
+
+    function normalizeOrdersQueueColumnLayouts(input: any): any {
+      var source = input || {};
+      return ORDERS_QUEUE_PREF_KEYS.reduce(function(acc: any, key: string) {
+        acc[key] = normalizeOrdersQueueColumnLayout(source[key]);
+        return acc;
+      }, {});
+    }
+
+    function normalizeOrdersManagementViewPreferences(input: any): any {
+      var source = input || {};
+      return {
+        open: normalizeOrdersQueueViewMode(source.open),
+        completed: normalizeOrdersQueueViewMode(source.completed),
+        onlineOnly: normalizeOrdersQueueViewMode(source.onlineOnly),
+        futureOrders: normalizeOrdersQueueViewMode(source.futureOrders),
+        columnLayouts: normalizeOrdersQueueColumnLayouts(source.columnLayouts)
+      };
     }
 
     function safeParseLegacyOrders(): any[] {
@@ -683,6 +742,21 @@
         groupsById: {},
         optsByGroup: new Map(),
         indexMs: 0
+      },
+
+      defaultOrdersManagementViewPreferences: function() {
+        return normalizeOrdersManagementViewPreferences(null);
+      },
+
+      loadOrdersManagementViewPreferences: async function() {
+        var stored = await kvGet(ORDERS_MANAGEMENT_VIEW_PREFS_KEY);
+        return normalizeOrdersManagementViewPreferences(stored);
+      },
+
+      saveOrdersManagementViewPreferences: async function(preferences: any) {
+        var normalized = normalizeOrdersManagementViewPreferences(preferences);
+        await kvPut(ORDERS_MANAGEMENT_VIEW_PREFS_KEY, normalized);
+        return normalized;
       },
 
       loadRuntimePackage: function(input: any, seed?: any) {

@@ -261,19 +261,19 @@ button:disabled {
 }
 
 .lilpay-quick-exact {
-  background: #111 !important;
+  background: #16a34a !important;
   color: #fff !important;
-  border-color: #111 !important;
+  border-color: #15803d !important;
 }
 
 .lilpay-quick-exact:hover {
-  background: #333 !important;
-  border-color: #333 !important;
+  background: #15803d !important;
+  border-color: #166534 !important;
 }
 
 .lilpay-quick-exact:active {
-  background: #000 !important;
-  border-color: #000 !important;
+  background: #166534 !important;
+  border-color: #14532d !important;
 }
 
 .lilpay-quick-exact:disabled {
@@ -963,18 +963,21 @@ button:disabled {
 
 .lilpay-actions-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
 .lilpay-action-btn {
-  min-height: 46px;
+  min-height: 42px;
   border: 1px solid #dbe4ef;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fff;
   color: #0f2357;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
+  padding: 8px 10px;
+  white-space: nowrap;
 }
 
 .lilpay-action-primary {
@@ -2015,6 +2018,40 @@ button:disabled {
   color: #7c2d12;
 }
 
+.orders-view-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 10px;
+}
+
+.orders-view-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #f8fafc;
+  gap: 2px;
+}
+
+.orders-view-switch-option {
+  min-height: 32px;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: transparent;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.orders-view-switch-option.active {
+  background: #0f2357;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(15, 35, 87, 0.18);
+}
+
 .orders-mgmt-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -2030,6 +2067,160 @@ button:disabled {
   padding: 10px;
   display: grid;
   gap: 6px;
+}
+
+.orders-mgmt-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.orders-mgmt-row {
+  display: grid;
+  --orders-col-order: minmax(54px, 0.55fr);
+  --orders-col-customer: minmax(110px, 1.25fr);
+  --orders-col-phone: minmax(96px, 0.82fr);
+  --orders-col-type: minmax(70px, 0.66fr);
+  --orders-col-receivedTime: minmax(82px, 0.74fr);
+  --orders-col-dueTime: minmax(88px, 0.86fr);
+  --orders-col-source: minmax(62px, 0.58fr);
+  --orders-col-payment: minmax(104px, 0.92fr);
+  --orders-col-status: minmax(78px, 0.72fr);
+  --orders-col-total: minmax(68px, 0.64fr);
+  grid-template-columns: var(--orders-row-columns, var(--orders-col-order) var(--orders-col-customer) var(--orders-col-phone) var(--orders-col-type) var(--orders-col-receivedTime) var(--orders-col-dueTime) var(--orders-col-source) var(--orders-col-payment) var(--orders-col-status) var(--orders-col-total));
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.orders-mgmt-row-head {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.orders-row-head-cell {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  padding: 4px 3px;
+  text-align: left;
+  font: inherit;
+  text-transform: inherit;
+  cursor: grab;
+}
+
+.orders-row-head-cell span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orders-row-head-cell:hover,
+.orders-row-head-cell.is-drag-over {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.orders-row-head-cell:active {
+  cursor: grabbing;
+}
+
+.orders-row-sort-marker {
+  width: 1em;
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.orders-mgmt-row:not(.orders-mgmt-row-head):hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.orders-mgmt-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orders-row-number {
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.orders-row-phone,
+.orders-row-received-time,
+.orders-row-due-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.orders-row-customer {
+  display: grid;
+  gap: 1px;
+}
+
+.orders-row-customer-name,
+.orders-row-customer-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orders-row-customer-meta {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.orders-row-total {
+  text-align: right;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.orders-row-payment .order-payment-badge,
+.orders-row-status .order-status {
+  margin: 0;
+  max-width: 100%;
+  transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.orders-row-payment .order-payment-badge {
+  border-width: 1px;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 10px;
+}
+
+.orders-row-status .order-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
 }
 
 .order-tile-badge-row {
@@ -4106,7 +4297,6 @@ button:disabled {
 
   .lilpay-cash-grid,
   .lilpay-method-tabs,
-  .lilpay-actions-row,
   .lilpay-quick-row,
   .lilpay-card-secondary-actions,
   .lilpay-text-link-actions {
@@ -4213,6 +4403,7 @@ button:disabled {
   .mgr-keyboard-radio-group {
     justify-content: flex-start;
   }
+
 }
 
 @media (max-width: 760px) {
@@ -4222,6 +4413,25 @@ button:disabled {
 
   .pizza-row-list {
     grid-template-columns: 1fr;
+  }
+
+  .orders-view-toolbar {
+    justify-content: flex-start;
+  }
+
+  .orders-mgmt-row {
+    grid-template-columns: minmax(48px, 0.58fr) minmax(0, 1.28fr) minmax(78px, 0.86fr) minmax(64px, 0.72fr) minmax(70px, 0.82fr) minmax(84px, 0.92fr) minmax(58px, 0.62fr);
+    gap: 7px;
+    padding: 7px 8px;
+  }
+
+  .orders-row-type {
+    max-width: 10ch;
+  }
+
+  .orders-row-payment .order-payment-badge {
+    padding-left: 6px;
+    padding-right: 6px;
   }
 }
 

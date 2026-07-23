@@ -5,6 +5,7 @@ const APP_SHELL = [
     './index.html',
     './styles.css',
     './dist/lilpos-runtime-data.js',
+    './dist/app/orders-management-view.js',
     './dist/app.js',
     './manifest.webmanifest',
     './icons/icon-192.png',

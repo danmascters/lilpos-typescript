@@ -104,22 +104,32 @@ describe('receipt popup after payment', () => {
       openPayPaneBtn?.dispatchEvent(new app.window.MouseEvent('click', { bubbles: true }));
       await wait(60);
 
-      // Cash pane might render if payment view is active
+      // Payment pane might render if payment view is active
       const html = app.document.body.innerHTML;
       if (html.includes('data-lilpay-quick="exact"')) {
         expect(html).toContain('lilpay-quick-exact');
       } else {
-        // Verify via direct cashPaymentPaneHtml call if available
-        const cashFn = (app.window as any).cashPaymentPaneHtml;
-        if (cashFn) {
-          const mockState = {
-            splitProcessingAmountCents: 0,
+        // Verify via direct payment pane render path if available
+        const paneApi = (app.window as any).LilposPaymentPane;
+        if (paneApi?.createStateFromInput && paneApi?.renderPane) {
+          const mockInput = {
+            displayOrderNumber: '1-17',
+            orderTypeLabel: 'To-Go',
+            stationName: 'Main Station',
+            subtotalCents: 1000,
+            taxCents: 200,
+            totalCents: 1200,
+            paymentsAppliedCents: 0,
             remainingBalanceCents: 1200,
-            cashReceivedCents: 0,
-            changeDueCents: 0
+            customer: { name: 'Guest', phone: '' },
+            items: [{ name: 'Slice', qty: 1, priceCents: 1200 }],
+            orderType: 'togo',
+            selectedMethod: 'cash'
           };
-          const rendered = cashFn(mockState);
+          const paneState = paneApi.createStateFromInput(mockInput);
+          const rendered = paneApi.renderPane(mockInput, paneState);
           expect(rendered).toContain('lilpay-quick-exact');
+          expect(rendered).toContain('Exact Change $12.00');
         }
       }
     } finally {
