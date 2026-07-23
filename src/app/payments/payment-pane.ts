@@ -111,6 +111,7 @@ function primaryActionDisabled(input: PaymentPaneInput, state: PaymentPaneState)
     if (!selected) return true;
     return !(selected.status === 'PENDING' || selected.status === 'DECLINED');
   }
+  if (state.selectedPaymentMethod === 'card' && state.cardTipCustomEditorOpen) return true;
   if (state.selectedPaymentMethod === 'card' && state.removingCardId) return true;
   if (state.selectedPaymentMethod !== 'text-payment-link') return false;
   return state.textPaymentLinkStatus === 'sending'
@@ -120,6 +121,27 @@ function primaryActionDisabled(input: PaymentPaneInput, state: PaymentPaneState)
 
 function displayOrderMeta(input: PaymentPaneInput): string {
   return `Order ${displayOrderNumber(input.displayOrderNumber)} • ${input.orderTypeLabel} • ${input.stationName}`;
+}
+
+function displayBalanceDueCents(state: PaymentPaneState): number {
+  if (state.selectedPaymentMethod === 'card') {
+    const baseCents = state.splitProcessingAmountCents > 0
+      ? Math.max(0, Number(state.splitProcessingAmountCents || 0))
+      : Math.max(0, Number(state.remainingBalanceCents || 0));
+    return baseCents + Math.max(0, Number(state.cardTipAmountCents || 0));
+  }
+  return Math.max(0, Number(state.remainingBalanceCents || 0));
+}
+
+function cardModeTipSummaryHtml(state: PaymentPaneState): string {
+  if (state.selectedPaymentMethod !== 'card') return '';
+  const tipCents = Math.max(0, Number(state.cardTipAmountCents || 0));
+  return `
+    <div class="lilpay-balance-tip-summary" aria-live="polite">
+      <span class="lilpay-balance-tip-label">Tip Amount</span>
+      <span class="lilpay-balance-tip-value">${formatCents(tipCents)}</span>
+    </div>
+  `;
 }
 
 function exactChangeActionLabel(state: PaymentPaneState): string {
@@ -144,8 +166,13 @@ function renderPane(input: PaymentPaneInput, state: PaymentPaneState): string {
         </header>
 
         <section class="lilpay-balance-card">
-          <div class="lilpay-balance-label">Balance Due</div>
-          <div class="lilpay-balance-value">${formatCents(state.remainingBalanceCents)}</div>
+          <div class="lilpay-balance-header-row">
+            <div>
+              <div class="lilpay-balance-label">Balance Due</div>
+              <div class="lilpay-balance-value">${formatCents(displayBalanceDueCents(state))}</div>
+            </div>
+            ${cardModeTipSummaryHtml(state)}
+          </div>
         </section>
 
         ${methodTabsHtml(state.selectedPaymentMethod)}

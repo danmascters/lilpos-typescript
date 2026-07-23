@@ -4,6 +4,8 @@ type OrderPaymentWorkflow = 'cash' | 'credit' | 'other';
 
 type CardStatus = 'ready' | 'processing' | 'approved' | 'declined' | 'error';
 
+type CardTipSelection = 'no-tip' | 'percent-10' | 'percent-15' | 'percent-20' | 'fixed-5' | 'fixed-10' | 'fixed-20' | 'custom' | 'mixed';
+
 type TextPaymentLinkStatus = 'ready' | 'sending' | 'sent' | 'pending' | 'paid' | 'failed' | 'expired';
 
 type SplitPaymentMode = 'CUSTOM' | 'EVEN';
@@ -127,6 +129,12 @@ type PaymentPaneState = {
   cashReceivedCents: number;
   changeDueCents: number;
   cardStatus: CardStatus;
+  cardTipFixedCents: number;
+  cardTipPercentBasisPoints: number;
+  cardTipAmountCents: number;
+  cardTipSelection: CardTipSelection;
+  cardTipCustomEditorOpen: boolean;
+  cardTipCustomEditorCents: number;
   textPaymentLinkStatus: TextPaymentLinkStatus;
   textPaymentLinkPhoneDigits: string;
   selectedSavedCardId: string | null;
@@ -218,6 +226,17 @@ type PaymentPaneAction =
   | { type: 'cof-remove-success'; id: string }
   | { type: 'cof-remove-failed'; id: string; message: string }
   | { type: 'set-card-status'; status: CardStatus; errorMessage?: string }
+  | { type: 'card-tip-set-percent'; percent: 10 | 15 | 20 }
+  | { type: 'card-tip-increment-percent'; percent: 1 }
+  | { type: 'card-tip-set-fixed'; cents: number }
+  | { type: 'card-tip-increment-fixed'; cents: number }
+  | { type: 'card-tip-no-tip' }
+  | { type: 'card-tip-open-custom' }
+  | { type: 'card-tip-editor-digit'; digit: string }
+  | { type: 'card-tip-editor-backspace' }
+  | { type: 'card-tip-editor-clear' }
+  | { type: 'card-tip-editor-cancel' }
+  | { type: 'card-tip-editor-confirm' }
   | { type: 'set-submitting'; submitting: boolean }
   | { type: 'split-set-mode'; mode: SplitPaymentMode }
   | { type: 'split-set-even-count'; count: number }

@@ -923,6 +923,16 @@ function disableNativeInputSuggestions(field: HTMLInputElement | HTMLTextAreaEle
   field.setAttribute('aria-autocomplete', 'none');
 }
 
+function isCalendarControlInput(element: Element | null | undefined): boolean {
+  if (!(element instanceof HTMLInputElement)) return false;
+  const type = String(element.type || '').toLowerCase();
+  return type === 'date'
+    || type === 'time'
+    || type === 'month'
+    || type === 'week'
+    || type === 'datetime-local';
+}
+
 const keyboardController = (() => {
   let mode: KeyboardMode = DEFAULT_KEYBOARD_MODE;
   let activeKeyboardTarget: HTMLInputElement | HTMLTextAreaElement | null = null;
@@ -950,13 +960,14 @@ const keyboardController = (() => {
     return rootEl;
   }
 
-  function isSupportedInput(element) {
+  function isSupportedInput(element: Element | null | undefined) {
     if (!element) return false;
     if (element instanceof HTMLTextAreaElement) {
       return !element.disabled && !element.readOnly;
     }
     if (!(element instanceof HTMLInputElement)) return false;
     if (element.disabled || element.readOnly) return false;
+    if (isCalendarControlInput(element)) return false;
     const type = String(element.type || 'text').toLowerCase();
     const blocked = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
     if (blocked.has(type)) return false;
@@ -1651,6 +1662,18 @@ function installKeyboardLifecycleEvents() {
     if (!keyboardController.isSupportedInput(target)) return;
     keyboardController.showKeyboardForInput(target as HTMLInputElement | HTMLTextAreaElement, { source: 'focusin' });
   });
+
+  document.addEventListener('pointerdown', (event) => {
+    const target = event.target as Element | null;
+    const input = target?.closest('input') as HTMLInputElement | null;
+    if (!isCalendarControlInput(input)) return;
+    const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+    if (typeof pickerInput.showPicker === 'function') {
+      pickerInput.showPicker();
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
 
   document.addEventListener('focusout', (event) => {
     const target = event.target as Element;
@@ -2650,6 +2673,7 @@ async function handlePaymentPanePrimaryAction() {
   const isCash = paneState.selectedPaymentMethod === 'cash';
   const isTextPaymentLink = paneState.selectedPaymentMethod === 'text-payment-link';
   const isOtherMethod = paneState.selectedPaymentMethod === 'gift-or-other';
+  const cardTipAmountCents = isCard ? Math.max(0, Number(paneState.cardTipAmountCents || 0)) : 0;
 
   if (!isCard && !isCash && !isTextPaymentLink && !isOtherMethod) {
     state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-error', message: 'This payment method is coming soon.' });
@@ -2789,6 +2813,7 @@ async function handlePaymentPanePrimaryAction() {
       paymentType = selectedCard ? 'Card on File' : 'Credit/Debit Card';
       cardBrand = selectedCard?.cardBrand || 'card';
       cardLast4 = selectedCard?.lastFour || '';
+      tipAmountCents = cardTipAmountCents;
     }
 
     if (isOrderContext) {
@@ -2827,6 +2852,7 @@ async function handlePaymentPanePrimaryAction() {
       await completeSelectedOrderPaymentFromPane({
         paymentType: selectedCard ? 'Card on File' : 'Credit/Debit Card',
         amountCents: paneState.remainingBalanceCents,
+        tipAmountCents: cardTipAmountCents,
         cardBrand: selectedCard?.cardBrand || '',
         lastFour: selectedCard?.lastFour || ''
       });
@@ -7642,10 +7668,10 @@ function ticketPanelHtml() {
           <div class="timing-wrap">
             <small class="timing-badge ${state.timingType === 'future' ? 'future' : 'asap'}">${h(timingLabel)}</small>
             ${state.timingType !== 'future' ? `<button id="asapClockBtn" class="timing-clock-btn" title="Adjust ASAP time" aria-label="Adjust ASAP time"><span class="icon-glyph">${navIcon('clock')}</span></button>` : ''}
+            <button id="calendarClassifier" class="icon-pill ${state.timingType === 'future' ? 'active' : ''}" title="Future order" aria-label="Future order"><span class="icon-glyph">${navIcon('calendar')}</span></button>
           </div>
           <div class="classifier-row">
             <button id="ordersViewBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.orders ? 'active' : ''}" title="Orders management" aria-label="Orders management"><span class="icon-glyph">${navIcon('orders')}</span></button>
-            <button id="calendarClassifier" class="icon-pill ${state.timingType === 'future' ? 'active' : ''}" title="Future order" aria-label="Future order"><span class="icon-glyph">${navIcon('calendar')}</span></button>
             <button id="customerMgmtBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.customers ? 'active' : ''}" title="Customer management" aria-label="Customer management"><span class="icon-glyph">${navIcon('customer')}</span></button>
           </div>
         </div>
@@ -7761,11 +7787,11 @@ function scheduleDialogHtml() {
         <div class="schedule-grid">
           <label>
             Date
-            <input id="scheduleDate" class="editor-input" type="date" value="${h(state.scheduleDialog.date)}" />
+            <input id="scheduleDate" class="editor-input" type="date" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.scheduleDialog.date)}" />
           </label>
           <label>
             Time
-            <input id="scheduleTime" class="editor-input" type="time" value="${h(state.scheduleDialog.time)}" />
+            <input id="scheduleTime" class="editor-input" type="time" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.scheduleDialog.time)}" />
           </label>
         </div>
         <div class="call-modal-actions">
@@ -7871,7 +7897,7 @@ function asapAdjustDialogHtml() {
         <p>Set a quick ready/requested time without using Future order mode.</p>
         <label>
           Time
-          <input id="asapAdjustTime" class="editor-input" type="time" value="${h(state.asapAdjustDialog.time)}" />
+          <input id="asapAdjustTime" class="editor-input" type="time" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.asapAdjustDialog.time)}" />
         </label>
         <div class="quick-time-row">
           <button data-asap-shift="15" class="btn-secondary">+15</button>
@@ -7941,11 +7967,11 @@ function payNowMissingDialogHtml() {
           <div class="schedule-grid">
             <label>
               Date
-              <input id="payNowMissingFutureDate" class="editor-input" type="date" value="${h(d.futureDate)}" />
+              <input id="payNowMissingFutureDate" class="editor-input" type="date" inputmode="none" virtualkeyboardpolicy="manual" value="${h(d.futureDate)}" />
             </label>
             <label>
               Time
-              <input id="payNowMissingFutureTime" class="editor-input" type="time" value="${h(d.futureTime)}" />
+              <input id="payNowMissingFutureTime" class="editor-input" type="time" inputmode="none" virtualkeyboardpolicy="manual" value="${h(d.futureTime)}" />
             </label>
           </div>
         ` : ''}
@@ -7984,11 +8010,11 @@ function payLaterMissingDialogHtml() {
           <div class="schedule-grid">
             <label>
               Date
-              <input id="payLaterMissingFutureDate" class="editor-input" type="date" value="${h(d.futureDate)}" />
+              <input id="payLaterMissingFutureDate" class="editor-input" type="date" inputmode="none" virtualkeyboardpolicy="manual" value="${h(d.futureDate)}" />
             </label>
             <label>
               Time
-              <input id="payLaterMissingFutureTime" class="editor-input" type="time" value="${h(d.futureTime)}" />
+              <input id="payLaterMissingFutureTime" class="editor-input" type="time" inputmode="none" virtualkeyboardpolicy="manual" value="${h(d.futureTime)}" />
             </label>
           </div>
         ` : ''}
@@ -9605,6 +9631,125 @@ function attachEvents() {
       }
       render();
     });
+  });
+
+  document.querySelectorAll('[data-lilpay-card-tip-percent]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const percent = Number((btn as HTMLElement).dataset.lilpayCardTipPercent || 0);
+      if (percent !== 10 && percent !== 15 && percent !== 20) return;
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'card-tip-set-percent',
+        percent
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-card-tip-inc-percent]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const percent = Number((btn as HTMLElement).dataset.lilpayCardTipIncPercent || 0);
+      if (percent !== 1) return;
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'card-tip-increment-percent',
+        percent: 1
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-card-tip-fixed]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const cents = Math.max(0, Number((btn as HTMLElement).dataset.lilpayCardTipFixed || 0));
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'card-tip-set-fixed',
+        cents
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-card-tip-inc-fixed]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const cents = Math.max(0, Number((btn as HTMLElement).dataset.lilpayCardTipIncFixed || 0));
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'card-tip-increment-fixed',
+        cents
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  $('[data-lilpay-card-tip-none="1"]')?.addEventListener('click', async () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'card-tip-no-tip'
+    });
+    await persistSplitWorkspaceFromPaneState();
+    render();
+  });
+
+  $('[data-lilpay-card-tip-custom="1"]')?.addEventListener('click', async () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'card-tip-open-custom'
+    });
+    await persistSplitWorkspaceFromPaneState();
+    render();
+  });
+
+  document.querySelectorAll('[data-lilpay-card-tip-key]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!state.paymentPaneState) return;
+      const digit = String((btn as HTMLElement).dataset.lilpayCardTipKey || '');
+      if (!/^[0-9]$/.test(digit)) return;
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'card-tip-editor-digit',
+        digit
+      });
+      render();
+    });
+  });
+
+  $('[data-lilpay-card-tip-backspace="1"]')?.addEventListener('click', () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'card-tip-editor-backspace'
+    });
+    render();
+  });
+
+  $('[data-lilpay-card-tip-clear="1"]')?.addEventListener('click', () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'card-tip-editor-clear'
+    });
+    render();
+  });
+
+  $('[data-lilpay-card-tip-cancel="1"]')?.addEventListener('click', async () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'card-tip-editor-cancel'
+    });
+    await persistSplitWorkspaceFromPaneState();
+    render();
+  });
+
+  $('[data-lilpay-card-tip-confirm="1"]')?.addEventListener('click', async () => {
+    if (!state.paymentPaneState) return;
+    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+      type: 'card-tip-editor-confirm'
+    });
+    await persistSplitWorkspaceFromPaneState();
+    render();
   });
 
   document.querySelectorAll('[data-lilpay-text-phone="1"]').forEach((field) => {

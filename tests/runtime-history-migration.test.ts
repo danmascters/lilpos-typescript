@@ -348,7 +348,9 @@ describe('Runtime history migration v1 -> v2', () => {
       historyId: 'hist_new_1',
       paymentId: 'payment_new_1',
       paymentType: 'Credit Card',
-      amountCents: 1066,
+      amountCents: 1266,
+      baseAmountCents: 1066,
+      tipAmountCents: 200,
       cardBrand: 'visa',
       cardLastFour: '4242',
       idempotencyKey: 'idemp_pay_new_1'
@@ -370,6 +372,9 @@ describe('Runtime history migration v1 -> v2', () => {
     expect(payments.length).toBe(1);
     expect(payments[0].historyId).toBe('hist_new_1');
     expect(payments[0].cardLastFour).toBe('4242');
+    expect(payments[0].baseAmountCents).toBe(1066);
+    expect(payments[0].tipAmountCents).toBe(200);
+    expect(payments[0].amountCents).toBe(1266);
     expect(compat.orderId || compat.id).toBe('order_new_1');
     expect(compat.lines.length).toBe(1);
   });

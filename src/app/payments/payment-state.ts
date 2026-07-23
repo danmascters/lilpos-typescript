@@ -11,7 +11,7 @@ function createStateFromInput(input: PaymentPaneInput): PaymentPaneState {
     ? window.LilposSplitPaymentState.createSplitWorkspace(input)
     : null;
 
-  return {
+  const initialState: PaymentPaneState = {
     selectedPaymentMethod: selected,
     subtotalCents: Math.max(0, Number(input.subtotalCents || 0)),
     taxCents: Math.max(0, Number(input.taxCents || 0)),
@@ -22,6 +22,12 @@ function createStateFromInput(input: PaymentPaneInput): PaymentPaneState {
     cashReceivedCents: 0,
     changeDueCents: 0,
     cardStatus: 'ready',
+    cardTipFixedCents: 0,
+    cardTipPercentBasisPoints: 0,
+    cardTipAmountCents: 0,
+    cardTipSelection: 'no-tip' as CardTipSelection,
+    cardTipCustomEditorOpen: false,
+    cardTipCustomEditorCents: 0,
     textPaymentLinkStatus: 'ready',
     textPaymentLinkPhoneDigits: normalizePhoneDigits(input.customer?.phone || ''),
     selectedSavedCardId: null,
@@ -33,6 +39,59 @@ function createStateFromInput(input: PaymentPaneInput): PaymentPaneState {
     isSubmitting: false,
     errorMessage: ''
   };
+
+  return withRecomputedCardTip(initialState);
+}
+
+function cardPaymentBaseAmountCents(state: PaymentPaneState): number {
+  if (Number(state.splitProcessingAmountCents || 0) > 0) {
+    return Math.max(0, Number(state.splitProcessingAmountCents || 0));
+  }
+  return Math.max(0, Number(state.remainingBalanceCents || 0));
+}
+
+function computeCardTipAmountCents(state: PaymentPaneState): number {
+  const fixedCents = Math.max(0, Number(state.cardTipFixedCents || 0));
+  const basisPoints = Math.max(0, Number(state.cardTipPercentBasisPoints || 0));
+  if (basisPoints <= 0) return fixedCents;
+  const baseCents = cardPaymentBaseAmountCents(state);
+  const percentCents = Math.round((baseCents * basisPoints) / 10000);
+  return Math.max(0, fixedCents + percentCents);
+}
+
+function syncSplitProcessingPortionTipDraft(state: PaymentPaneState): PaymentPaneState {
+  if (!state.splitWorkspace || !state.splitProcessingPortionId) return state;
+  const portionId = state.splitProcessingPortionId;
+  const tipAmountCents = Math.max(0, Number(state.cardTipAmountCents || 0));
+  let changed = false;
+  const portions = state.splitWorkspace.portions.map((portion) => {
+    if (portion.id !== portionId) return portion;
+    if (portion.status === 'APPROVED' || Number(portion.tipAmountCents || 0) === tipAmountCents) return portion;
+    changed = true;
+    return {
+      ...portion,
+      tipAmountCents,
+      updatedAt: new Date().toISOString()
+    };
+  });
+  if (!changed) return state;
+  return {
+    ...state,
+    splitWorkspace: {
+      ...state.splitWorkspace,
+      portions,
+      updatedAt: new Date().toISOString()
+    }
+  };
+}
+
+function withRecomputedCardTip(state: PaymentPaneState): PaymentPaneState {
+  const nextTipAmount = computeCardTipAmountCents(state);
+  const nextState = {
+    ...state,
+    cardTipAmountCents: nextTipAmount
+  };
+  return syncSplitProcessingPortionTipDraft(nextState);
 }
 
 function recomputeCashState(state: PaymentPaneState): PaymentPaneState {
@@ -53,6 +112,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       ...state,
       selectedPaymentMethod: action.method,
       selectedSavedCardId: action.method === 'card' ? state.selectedSavedCardId : null,
+      cardTipCustomEditorOpen: action.method === 'card' ? state.cardTipCustomEditorOpen : false,
       removingCardId: null,
       removingCardError: '',
       splitProcessingPortionId: action.method === 'split' ? state.splitProcessingPortionId : state.splitProcessingPortionId,
@@ -146,6 +206,134 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       cardStatus: action.status,
       errorMessage: action.errorMessage || ''
     };
+  }
+
+  if (action.type === 'card-tip-set-percent') {
+    const basisPoints = Math.max(0, Number(action.percent || 0)) * 100;
+    const selection: CardTipSelection = action.percent === 10
+      ? 'percent-10'
+      : action.percent === 15
+      ? 'percent-15'
+      : 'percent-20';
+    return withRecomputedCardTip({
+      ...state,
+      cardTipFixedCents: 0,
+      cardTipPercentBasisPoints: basisPoints,
+      cardTipSelection: selection,
+      cardTipCustomEditorOpen: false,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    });
+  }
+
+  if (action.type === 'card-tip-increment-percent') {
+    const incrementBasisPoints = Math.max(0, Number(action.percent || 0)) * 100;
+    return withRecomputedCardTip({
+      ...state,
+      cardTipPercentBasisPoints: Math.max(0, Number(state.cardTipPercentBasisPoints || 0)) + incrementBasisPoints,
+      cardTipSelection: 'mixed',
+      cardTipCustomEditorOpen: false,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    });
+  }
+
+  if (action.type === 'card-tip-set-fixed') {
+    const fixedCents = Math.max(0, Number(action.cents || 0));
+    const selection: CardTipSelection = fixedCents === 500
+      ? 'fixed-5'
+      : fixedCents === 1000
+      ? 'fixed-10'
+      : fixedCents === 2000
+      ? 'fixed-20'
+      : 'mixed';
+    return withRecomputedCardTip({
+      ...state,
+      cardTipFixedCents: fixedCents,
+      cardTipPercentBasisPoints: 0,
+      cardTipSelection: selection,
+      cardTipCustomEditorOpen: false,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    });
+  }
+
+  if (action.type === 'card-tip-increment-fixed') {
+    return withRecomputedCardTip({
+      ...state,
+      cardTipFixedCents: Math.max(0, Number(state.cardTipFixedCents || 0)) + Math.max(0, Number(action.cents || 0)),
+      cardTipSelection: 'mixed',
+      cardTipCustomEditorOpen: false,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    });
+  }
+
+  if (action.type === 'card-tip-no-tip') {
+    return withRecomputedCardTip({
+      ...state,
+      cardTipFixedCents: 0,
+      cardTipPercentBasisPoints: 0,
+      cardTipSelection: 'no-tip',
+      cardTipCustomEditorOpen: false,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    });
+  }
+
+  if (action.type === 'card-tip-open-custom') {
+    return withRecomputedCardTip({
+      ...state,
+      cardTipFixedCents: 0,
+      cardTipPercentBasisPoints: 0,
+      cardTipSelection: 'custom',
+      cardTipCustomEditorOpen: true,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    });
+  }
+
+  if (action.type === 'card-tip-editor-digit') {
+    return {
+      ...state,
+      cardTipCustomEditorCents: applyCurrencyDigitInput(state.cardTipCustomEditorCents, action.digit),
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-tip-editor-backspace') {
+    return {
+      ...state,
+      cardTipCustomEditorCents: applyCurrencyBackspace(state.cardTipCustomEditorCents),
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-tip-editor-clear') {
+    return {
+      ...state,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-tip-editor-cancel') {
+    return {
+      ...state,
+      cardTipCustomEditorOpen: false,
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-tip-editor-confirm') {
+    return withRecomputedCardTip({
+      ...state,
+      cardTipFixedCents: Math.max(0, Number(state.cardTipCustomEditorCents || 0)),
+      cardTipPercentBasisPoints: 0,
+      cardTipSelection: 'custom',
+      cardTipCustomEditorOpen: false,
+      errorMessage: ''
+    });
   }
 
   if (action.type === 'set-submitting') {
@@ -255,13 +443,19 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
   if (action.type === 'split-mark-processing') {
     if (!state.splitWorkspace || !window.LilposSplitPaymentState) return state;
     const portion = state.splitWorkspace.portions.find((entry) => entry.id === action.portionId);
-    return {
+    const restoredTipCents = Math.max(0, Number(portion?.tipAmountCents || 0));
+    return withRecomputedCardTip({
       ...state,
       splitWorkspace: window.LilposSplitPaymentState.splitMarkPortionProcessing(state.splitWorkspace, action.portionId),
       splitProcessingPortionId: action.portionId,
       splitProcessingAmountCents: portion ? Number(portion.plannedAmountCents || 0) : 0,
+      cardTipFixedCents: restoredTipCents,
+      cardTipPercentBasisPoints: 0,
+      cardTipSelection: restoredTipCents > 0 ? 'custom' : 'no-tip',
+      cardTipCustomEditorOpen: false,
+      cardTipCustomEditorCents: restoredTipCents,
       errorMessage: ''
-    };
+    });
   }
 
   if (action.type === 'split-mark-approved') {
@@ -279,14 +473,14 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
     const nextApplied = window.LilposSplitPaymentMath
       ? window.LilposSplitPaymentMath.splitPaidSoFarCents(nextWorkspace.portions)
       : state.paymentsAppliedCents;
-    return recomputeCashState({
+    return withRecomputedCardTip(recomputeCashState({
       ...state,
       splitWorkspace: nextWorkspace,
       paymentsAppliedCents: nextApplied,
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
       errorMessage: ''
-    });
+    }));
   }
 
   if (action.type === 'split-mark-declined') {
@@ -316,12 +510,12 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
   }
 
   if (action.type === 'split-clear-processing') {
-    return {
+    return withRecomputedCardTip({
       ...state,
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
       isSubmitting: false
-    };
+    });
   }
 
   if (action.type === 'set-error') {

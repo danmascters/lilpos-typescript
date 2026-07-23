@@ -95,7 +95,7 @@ function loadOrdersHelper() {
 }
 
 describe('Orders Management view mode helper', () => {
-  it('defaults every queue to Standard and stores queues independently', () => {
+  it('defaults every queue to Tiles mode and stores queues independently', () => {
     const { dom, api } = loadOrdersHelper();
     try {
       const defaults = api.normalizePreferences(null);
@@ -232,6 +232,7 @@ describe('Orders Management view mode helper', () => {
       const host = dom.window.document.createElement('div');
       host.innerHTML = switchHtml + rowsHtml;
 
+      expect(host.querySelector('[data-orders-view-mode="STANDARD"]')?.textContent).toBe('Tiles');
       expect(host.querySelector('[data-orders-view-mode="ROWS"]')?.classList.contains('active')).toBe(true);
       expect(host.querySelector('.orders-mgmt-rows')).not.toBeNull();
       expect(host.querySelectorAll('[data-open-order]').length).toBe(0);
@@ -242,7 +243,7 @@ describe('Orders Management view mode helper', () => {
 });
 
 describe('Orders Management view mode app behavior', () => {
-  it('keeps Standard as the initial card mode and preserves card markup', async () => {
+  it('keeps Tiles as the initial card mode and preserves card markup', async () => {
     const app = await bootApp();
     try {
       click(app.document, '#ordersViewBtn');
@@ -313,7 +314,7 @@ describe('Orders Management view mode app behavior', () => {
     }
   });
 
-  it('empty queues show the view switch in both Standard and Rows modes', async () => {
+  it('empty queues show the view switch in both Tiles and Rows modes', async () => {
     const app = await bootApp();
     try {
       click(app.document, '#ordersViewBtn');

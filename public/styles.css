@@ -160,6 +160,13 @@ button:disabled {
   background: #fff;
 }
 
+.lilpay-balance-header-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
 .lilpay-balance-label {
   font-size: 16px;
   color: #475569;
@@ -168,6 +175,26 @@ button:disabled {
 
 .lilpay-balance-value {
   font-size: 40px;
+  line-height: 1;
+  font-weight: 800;
+  color: #0f2357;
+}
+
+.lilpay-balance-tip-summary {
+  display: grid;
+  gap: 4px;
+  align-self: center;
+  justify-items: start;
+}
+
+.lilpay-balance-tip-label {
+  font-size: 14px;
+  color: #0f2357;
+  font-weight: 700;
+}
+
+.lilpay-balance-tip-value {
+  font-size: 34px;
   line-height: 1;
   font-weight: 800;
   color: #0f2357;
@@ -361,6 +388,23 @@ button:disabled {
   gap: 8px;
 }
 
+.lilpay-card-consolidated-row {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(540px, 1.45fr);
+  gap: 14px;
+  align-items: center;
+}
+
+.lilpay-card-consolidated-tip {
+  min-width: 0;
+}
+
+.lilpay-card-secondary-actions-consolidated {
+  grid-template-columns: minmax(240px, 1fr);
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+}
+
 .lilpay-sub-action {
   min-height: 44px;
   border: 1px solid #dbe4ef;
@@ -369,6 +413,94 @@ button:disabled {
   color: #0f2357;
   font-size: 15px;
   font-weight: 700;
+}
+
+.lilpay-sub-action.active {
+  background: #ffedd5;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+
+.lilpay-card-tip-panel {
+  margin-top: 12px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.lilpay-card-tip-panel-compact {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 0;
+  gap: 8px;
+}
+
+.lilpay-card-tip-amount-inline {
+  font-size: 16px;
+  color: #0f2357;
+  font-weight: 700;
+}
+
+.lilpay-card-tip-panel h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #0f2357;
+}
+
+.lilpay-card-tip-amount {
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 800;
+  color: #0f2357;
+}
+
+.lilpay-card-tip-totals {
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  padding: 10px;
+  background: #f8fafc;
+  display: grid;
+  gap: 6px;
+}
+
+.lilpay-card-tip-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lilpay-card-tip-grid .lilpay-sub-action {
+  min-height: 40px;
+  font-size: 13px;
+  padding: 8px 6px;
+}
+
+.lilpay-card-tip-editor {
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.lilpay-card-tip-editor h4 {
+  margin: 0;
+  font-size: 15px;
+  color: #0f2357;
+}
+
+.lilpay-card-tip-editor .lilpay-amount-display {
+  min-height: 56px;
+  font-size: 30px;
+  margin-bottom: 0;
+}
+
+.lilpay-card-tip-editor-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 /* ── Card on File ────────────────────────────────── */
@@ -1571,7 +1703,8 @@ button:disabled {
 .timing-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
+  flex-wrap: nowrap;
 }
 
 .icon-pill {
@@ -1610,8 +1743,8 @@ button:disabled {
 }
 
 .timing-clock-btn .nav-svg {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
 }
 
 .icon-pill .nav-svg {
@@ -4303,6 +4436,29 @@ button:disabled {
     grid-template-columns: 1fr 1fr;
   }
 
+  .lilpay-balance-header-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .lilpay-balance-tip-value {
+    font-size: 26px;
+  }
+
+  .lilpay-card-consolidated-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .lilpay-card-secondary-actions-consolidated {
+    grid-template-columns: 1fr;
+  }
+
+  .lilpay-card-tip-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .lilpay-balance-value {
     font-size: 32px;
   }
@@ -4341,7 +4497,7 @@ button:disabled {
   }
 
   .timing-wrap {
-    justify-content: space-between;
+    justify-content: flex-start;
   }
 
   .classifier-row {

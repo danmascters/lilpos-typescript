@@ -188,7 +188,7 @@
     var activeMode = normalizeViewMode(input && input.activeMode);
     var h = input && input.h || function(value: any) { return String(value == null ? '' : value); };
     var options = [
-      { mode: VIEW_MODE_STANDARD, label: 'Standard' },
+      { mode: VIEW_MODE_STANDARD, label: 'Tiles' },
       { mode: VIEW_MODE_ROWS, label: 'Rows' }
     ];
     return '<div class="orders-view-switch" role="group" aria-label="Orders display mode">'

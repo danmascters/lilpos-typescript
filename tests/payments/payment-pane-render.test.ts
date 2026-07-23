@@ -36,6 +36,37 @@ describe('payment pane render', () => {
     expect(html).toContain('Ready for card');
     expect(html).toContain('Tap / Insert / Swipe');
     expect(html).toContain('Charge Card & Complete');
+    expect(html).toContain('Tip $0.00');
+    expect(html).toContain('No Tip');
+    expect(html).toContain('Custom Amount');
+  });
+
+  it('renders card tip value in consolidated controls and top balance summary', () => {
+    const state = {
+      ...createStateFromInput(input),
+      selectedPaymentMethod: 'card',
+      cardTipFixedCents: 500,
+      cardTipPercentBasisPoints: 0,
+      cardTipAmountCents: 500,
+      cardTipSelection: 'fixed-5'
+    };
+    const html = renderPane(input, state);
+    expect(html).toContain('Tip $5.00');
+    expect(html).toContain('Tip Amount');
+    expect(html).toContain('lilpay-balance-tip-value">$5.00');
+  });
+
+  it('card mode balance due reflects selected tip amount dynamically', () => {
+    const state = {
+      ...createStateFromInput(input),
+      selectedPaymentMethod: 'card',
+      cardTipFixedCents: 500,
+      cardTipPercentBasisPoints: 0,
+      cardTipAmountCents: 500,
+      cardTipSelection: 'fixed-5'
+    };
+    const html = renderPane(input, state);
+    expect(html).toContain('<div class="lilpay-balance-value">$32.05</div>');
   });
 
   it('renders text payment link workflow and status copy', () => {

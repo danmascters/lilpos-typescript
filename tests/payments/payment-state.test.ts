@@ -96,4 +96,168 @@ describe('payment state', () => {
     expect(failed.removingCardError).toBe('Server error.');
     expect(failed.removingCardId).toBe('pm_001');
   });
+
+  it('card tip defaults to $0.00 with No Tip selected', () => {
+    const state = createStateFromInput(input);
+    expect(state.cardTipAmountCents).toBe(0);
+    expect(state.cardTipSelection).toBe('no-tip');
+  });
+
+  it('10%, 15%, and 20% tips are calculated in cents with deterministic rounding', () => {
+    const state = createStateFromInput(input);
+    const p10 = reducer(state, { type: 'card-tip-set-percent', percent: 10 });
+    const p15 = reducer(state, { type: 'card-tip-set-percent', percent: 15 });
+    const p20 = reducer(state, { type: 'card-tip-set-percent', percent: 20 });
+    expect(p10.cardTipAmountCents).toBe(271);
+    expect(p15.cardTipAmountCents).toBe(406);
+    expect(p20.cardTipAmountCents).toBe(541);
+  });
+
+  it('selecting a new percentage replaces the previous percentage preset', () => {
+    const state = createStateFromInput(input);
+    const p20 = reducer(state, { type: 'card-tip-set-percent', percent: 20 });
+    const p10 = reducer(p20, { type: 'card-tip-set-percent', percent: 10 });
+    expect(p10.cardTipAmountCents).toBe(271);
+    expect(p10.cardTipSelection).toBe('percent-10');
+  });
+
+  it('repeated +1% presses increment current tip percentage contribution', () => {
+    const state = createStateFromInput(input);
+    const p20 = reducer(state, { type: 'card-tip-set-percent', percent: 20 });
+    const plusOneA = reducer(p20, { type: 'card-tip-increment-percent', percent: 1 });
+    const plusOneB = reducer(plusOneA, { type: 'card-tip-increment-percent', percent: 1 });
+    expect(plusOneA.cardTipAmountCents).toBe(568);
+    expect(plusOneB.cardTipAmountCents).toBe(595);
+    expect(plusOneB.cardTipSelection).toBe('mixed');
+  });
+
+  it('$5, $10, and $20 set fixed tips and replace one another', () => {
+    const state = createStateFromInput(input);
+    const twenty = reducer(state, { type: 'card-tip-set-fixed', cents: 2000 });
+    const five = reducer(twenty, { type: 'card-tip-set-fixed', cents: 500 });
+    expect(twenty.cardTipAmountCents).toBe(2000);
+    expect(five.cardTipAmountCents).toBe(500);
+    expect(five.cardTipSelection).toBe('fixed-5');
+  });
+
+  it('repeated +$1 presses increment tip and clear exact preset highlighting', () => {
+    const state = createStateFromInput(input);
+    const ten = reducer(state, { type: 'card-tip-set-fixed', cents: 1000 });
+    const plusOneA = reducer(ten, { type: 'card-tip-increment-fixed', cents: 100 });
+    const plusOneB = reducer(plusOneA, { type: 'card-tip-increment-fixed', cents: 100 });
+    expect(plusOneA.cardTipAmountCents).toBe(1100);
+    expect(plusOneB.cardTipAmountCents).toBe(1200);
+    expect(plusOneB.cardTipSelection).toBe('mixed');
+  });
+
+  it('No Tip resets tip state to zero', () => {
+    const state = createStateFromInput(input);
+    const tipped = reducer(state, { type: 'card-tip-set-fixed', cents: 1000 });
+    const reset = reducer(tipped, { type: 'card-tip-no-tip' });
+    expect(reset.cardTipAmountCents).toBe(0);
+    expect(reset.cardTipFixedCents).toBe(0);
+    expect(reset.cardTipPercentBasisPoints).toBe(0);
+    expect(reset.cardTipSelection).toBe('no-tip');
+  });
+
+  it('Custom Amount opens editor and resets current tip to $0.00 before entry', () => {
+    const state = createStateFromInput(input);
+    const tipped = reducer(state, { type: 'card-tip-set-fixed', cents: 1000 });
+    const customOpen = reducer(tipped, { type: 'card-tip-open-custom' });
+    expect(customOpen.cardTipCustomEditorOpen).toBe(true);
+    expect(customOpen.cardTipAmountCents).toBe(0);
+    expect(customOpen.cardTipSelection).toBe('custom');
+  });
+
+  it('Custom Amount stores entered value in cents and supports +$1 and +1% afterward', () => {
+    let state = createStateFromInput(input);
+    state = reducer(state, { type: 'card-tip-open-custom' });
+    state = reducer(state, { type: 'card-tip-editor-digit', digit: '1' });
+    state = reducer(state, { type: 'card-tip-editor-digit', digit: '2' });
+    state = reducer(state, { type: 'card-tip-editor-digit', digit: '3' });
+    state = reducer(state, { type: 'card-tip-editor-digit', digit: '4' });
+    state = reducer(state, { type: 'card-tip-editor-confirm' });
+    expect(state.cardTipAmountCents).toBe(1234);
+    expect(state.cardTipSelection).toBe('custom');
+
+    const plusDollar = reducer(state, { type: 'card-tip-increment-fixed', cents: 100 });
+    expect(plusDollar.cardTipAmountCents).toBe(1334);
+
+    const plusPercent = reducer(state, { type: 'card-tip-increment-percent', percent: 1 });
+    expect(plusPercent.cardTipAmountCents).toBe(1261);
+  });
+
+  it('percentage-derived tip recalculates when base payment amount changes', () => {
+    let state = createStateFromInput(input);
+    const firstPortionId = state.splitWorkspace.portions[0].id;
+    state = reducer(state, { type: 'split-mark-processing', portionId: firstPortionId });
+    state = reducer(state, { type: 'card-tip-set-percent', percent: 20 });
+    expect(state.cardTipAmountCents).toBe(541);
+    state = reducer(state, {
+      type: 'split-mark-approved',
+      portionId: firstPortionId,
+      approvedAmountCents: 1000,
+      tipAmountCents: state.cardTipAmountCents,
+      paymentId: 'pay_tip_recalc'
+    });
+
+    // Remaining balance changed from 2705 -> 1705, so 20% tip should recompute.
+    expect(state.remainingBalanceCents).toBe(1705);
+    expect(state.cardTipAmountCents).toBe(341);
+  });
+
+  it('tip does not reduce remaining order balance', () => {
+    const state = createStateFromInput(input);
+    const tipped = reducer(state, { type: 'card-tip-set-fixed', cents: 2000 });
+    expect(tipped.remainingBalanceCents).toBe(2705);
+  });
+
+  it('split card portions retain independent tips and declined tips are not approved', () => {
+    let state = createStateFromInput(input);
+    const firstPortionId = state.splitWorkspace.portions[0].id;
+
+    state = reducer(state, { type: 'split-mark-processing', portionId: firstPortionId });
+    state = reducer(state, { type: 'card-tip-set-fixed', cents: 500 });
+    state = reducer(state, {
+      type: 'split-mark-approved',
+      portionId: firstPortionId,
+      approvedAmountCents: 1000,
+      tipAmountCents: state.cardTipAmountCents,
+      paymentId: 'pay_portion_1'
+    });
+
+    const secondPortionId = state.splitWorkspace.portions.find((portion: any) => portion.status === 'PENDING')?.id;
+    expect(secondPortionId).toBeTruthy();
+    state = reducer(state, { type: 'split-mark-processing', portionId: secondPortionId });
+    state = reducer(state, { type: 'card-tip-set-fixed', cents: 1000 });
+    state = reducer(state, {
+      type: 'split-mark-approved',
+      portionId: secondPortionId,
+      approvedAmountCents: 1000,
+      tipAmountCents: state.cardTipAmountCents,
+      paymentId: 'pay_portion_2'
+    });
+
+    const approved = state.splitWorkspace.portions.filter((portion: any) => portion.status === 'APPROVED');
+    const tipByPaymentId = Object.fromEntries(approved.map((portion: any) => [portion.paymentId, portion.tipAmountCents]));
+    expect(tipByPaymentId.pay_portion_1).toBe(500);
+    expect(tipByPaymentId.pay_portion_2).toBe(1000);
+    expect(state.remainingBalanceCents).toBe(705);
+
+    const thirdPortionId = state.splitWorkspace.portions.find((portion: any) => portion.status === 'PENDING')?.id;
+    expect(thirdPortionId).toBeTruthy();
+    state = reducer(state, { type: 'split-mark-processing', portionId: thirdPortionId });
+    state = reducer(state, { type: 'card-tip-set-fixed', cents: 700 });
+    state = reducer(state, {
+      type: 'split-mark-declined',
+      portionId: thirdPortionId,
+      failureCode: 'DECLINED',
+      failureMessage: 'Declined'
+    });
+
+    const declined = state.splitWorkspace.portions.find((portion: any) => portion.id === thirdPortionId);
+    expect(declined.status).toBe('DECLINED');
+    expect(declined.tipAmountCents).toBe(0);
+    expect(state.splitWorkspace.paidCents).toBe(2000);
+  });
 });
