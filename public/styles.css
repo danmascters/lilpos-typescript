@@ -271,6 +271,28 @@ button:disabled {
   font-weight: 700;
 }
 
+.lilpay-keypad-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.lilpay-keypad-split button {
+  min-height: 44px;
+  border: 1px solid #dbe4ef;
+  border-radius: 10px;
+  background: #fff;
+  color: #0f2357;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.lilpay-keypad-clear {
+  color: #b91c1c !important;
+  border-color: #fecaca !important;
+  font-weight: 800 !important;
+}
+
 .lilpay-quick-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));

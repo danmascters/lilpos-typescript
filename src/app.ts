@@ -559,6 +559,7 @@ const state: any = {
   },
   paymentPaneInput: null,
   paymentPaneState: null,
+  paymentPaneExactSendArmed: false,
   orderPaymentContext: null,
   orderSendLocked: false,
   orderNumberDialog: {
@@ -2559,6 +2560,18 @@ async function restoreSplitWorkspaceForCurrentPane() {
     if (!existing?.plan) return;
     const planStatus = String(existing.plan.status || 'ACTIVE').toUpperCase();
     if (planStatus !== 'ACTIVE') return;
+
+    const expectedOriginalBalanceCents = Math.max(
+      0,
+      Number(state.paymentPaneInput.totalCents || state.paymentPaneInput.remainingBalanceCents || 0)
+    );
+    const restoredOriginalBalanceCents = Math.max(0, Number(existing.plan.originalBalanceCents || 0));
+
+    // Ignore stale split plans that belong to an older balance snapshot for the same order id.
+    if (restoredOriginalBalanceCents > 0 && expectedOriginalBalanceCents > 0 && restoredOriginalBalanceCents !== expectedOriginalBalanceCents) {
+      return;
+    }
+
     applyRecoveredSplitWorkspaceToPane(existing.plan, existing.portions || []);
     render();
   } catch (err) {
@@ -2595,6 +2608,7 @@ function openSplitPortionTender(portionId: string) {
 function openPaymentPane() {
   if (!window.LilposPaymentPane) return;
   state.orderPaymentContext = null;
+  state.paymentPaneExactSendArmed = false;
   const input = buildPaymentPaneInput();
   state.paymentPaneInput = input;
   state.paymentPaneState = window.LilposPaymentPane.createStateFromInput(input);
@@ -2605,6 +2619,7 @@ function openPaymentPane() {
 async function handlePaymentPanePrimaryAction() {
   if (!state.paymentPaneState || !state.paymentPaneInput) return;
   if (state.orderSendLocked || state.paymentPaneState.isSubmitting) return;
+  state.paymentPaneExactSendArmed = false;
 
   const paneInput = state.paymentPaneInput;
   const paneState = state.paymentPaneState;
@@ -2961,6 +2976,7 @@ function resetTicketAfterPayment() {
   state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
   state.paymentPaneInput = null;
   state.paymentPaneState = null;
+  state.paymentPaneExactSendArmed = false;
   state.orderPaymentContext = null;
   resetOrderClassifiers();
 }
@@ -3026,6 +3042,7 @@ function resetForNewSale() {
   state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
   state.paymentPaneInput = null;
   state.paymentPaneState = null;
+  state.paymentPaneExactSendArmed = false;
   state.orderPaymentContext = null;
   resetOrderClassifiers();
 }
@@ -5158,6 +5175,7 @@ function closePaymentPaneToSource() {
   const isOrderContext = state.orderPaymentContext?.source === 'orders-management';
   state.paymentPaneState = null;
   state.paymentPaneInput = null;
+  state.paymentPaneExactSendArmed = false;
   state.orderPaymentContext = null;
   state.mainView = isOrderContext ? MAIN_VIEWS.orders : MAIN_VIEWS.menu;
 }
@@ -5174,6 +5192,7 @@ function openSelectedOrderPaymentWorkflow(workflow: OrderPaymentWorkflow) {
   if (!context) return;
 
   state.orderPaymentContext = context;
+  state.paymentPaneExactSendArmed = false;
   const input = buildPaymentPaneInputForOrderContext(order, context);
   state.paymentPaneInput = input;
   state.paymentPaneState = window.LilposPaymentPane.createStateFromInput(input);
@@ -9460,6 +9479,7 @@ function attachEvents() {
         type: 'select-method',
         method
       });
+      state.paymentPaneExactSendArmed = false;
       render();
     });
   });
@@ -9602,11 +9622,16 @@ function attachEvents() {
   document.querySelectorAll('[data-lilpay-key]').forEach((b) => {
     b.addEventListener('click', () => {
       if (!state.paymentPaneState) return;
+      state.paymentPaneExactSendArmed = false;
       const key = (b as HTMLElement).dataset.lilpayKey || '';
       if (key === 'backspace') {
         state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-backspace' });
-      } else if (/^[0-9]$/.test(key)) {
-        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-digit', digit: key });
+      } else if (key === 'clear') {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-set-amount', cents: 0 });
+      } else if (/^[0-9]{1,2}$/.test(key)) {
+        for (const digit of key) {
+          state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-digit', digit });
+        }
       }
       render();
     });
@@ -9620,10 +9645,17 @@ function attachEvents() {
         state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'cash-exact' });
         const isFooterExactAction = (b as HTMLElement).classList.contains('lilpay-action-btn');
         if (isFooterExactAction) {
+          if (!state.paymentPaneExactSendArmed) {
+            state.paymentPaneExactSendArmed = true;
+            render();
+            return;
+          }
+          state.paymentPaneExactSendArmed = false;
           void handlePaymentPanePrimaryAction();
           return;
         }
       } else {
+        state.paymentPaneExactSendArmed = false;
         state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
           type: 'cash-set-amount',
           cents: Math.max(0, Number(raw || 0))

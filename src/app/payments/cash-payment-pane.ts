@@ -22,9 +22,12 @@ function cashPaymentPaneHtml(state: PaymentPaneState): string {
             <button type="button" data-lilpay-key="7">7</button>
             <button type="button" data-lilpay-key="8">8</button>
             <button type="button" data-lilpay-key="9">9</button>
-            <button type="button" data-lilpay-key="decimal" disabled title="Decimal handled automatically">.</button>
             <button type="button" data-lilpay-key="0">0</button>
-            <button type="button" data-lilpay-key="backspace" aria-label="Backspace">⌫</button>
+            <button type="button" data-lilpay-key="00">00</button>
+            <div class="lilpay-keypad-split" role="group" aria-label="Cash edit controls">
+              <button type="button" data-lilpay-key="backspace" aria-label="Backspace">⌫</button>
+              <button type="button" class="lilpay-keypad-clear" data-lilpay-key="clear" aria-label="Clear amount">C</button>
+            </div>
           </div>
         </div>
         <div class="lilpay-cash-col">
