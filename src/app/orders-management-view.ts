@@ -56,7 +56,7 @@
     { id: 'customer', label: 'Customer', className: 'orders-row-customer' },
     { id: 'phone', label: 'Phone', className: 'orders-row-phone' },
     { id: 'type', label: 'Type', className: 'orders-row-type' },
-    { id: 'receivedTime', label: 'Received Time', className: 'orders-row-received-time' },
+    { id: 'receivedTime', label: 'Placed At', className: 'orders-row-received-time' },
     { id: 'dueTime', label: 'Due Time', className: 'orders-row-due-time' },
     { id: 'source', label: 'Source', className: 'orders-row-source' },
     { id: 'payment', label: 'Payment', className: 'orders-row-payment' },

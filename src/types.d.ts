@@ -8,7 +8,11 @@ interface Window {
     createLilposDataService: (deps?: any) => any;
   };
   LilposOrdersManagement?: any;
+  LilposLocalDataAdmin?: any;
+  LilposStationDataManager?: any;
+  LilposStationDataManagerView?: any;
   lilposDataService?: any;
+  lilposLocalDataAdmin?: any;
 }
 
 declare const self: ServiceWorkerGlobalScope;

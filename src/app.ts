@@ -459,6 +459,18 @@ const state: any = {
   managerPinInfoMessage: '',
   managerUnlocked: false,
   managerSettingsSection: null,
+  stationDataManager: window.LilposStationDataManager?.defaultState ? window.LilposStationDataManager.defaultState() : {
+    loading: false,
+    error: '',
+    sections: [],
+    activeSectionId: '',
+    records: [],
+    query: '',
+    selectedRecord: null,
+    health: null,
+    lastRefreshedAt: '',
+    actionMessage: ''
+  },
   keyboardMode: DEFAULT_KEYBOARD_MODE,
   sentOrdersToday: [],
   quickItemEditor: {
@@ -4567,6 +4579,12 @@ const lilposDataService = createLilposDataService({
   getFallbackCustomers: () => state.mockCustomers
 });
 window.lilposDataService = lilposDataService;
+window.lilposLocalDataAdmin = window.LilposLocalDataAdmin?.createLocalDataAdmin
+  ? window.LilposLocalDataAdmin.createLocalDataAdmin({
+      dataService: lilposDataService,
+      stationId: STATION_NUMBER
+    })
+  : null;
 
 function runtimeSeed() {
   return {
@@ -7405,6 +7423,142 @@ function renderManagerKeyboardOptionsView() {
   `;
 }
 
+function stationDataManagerApi() {
+  return window.lilposLocalDataAdmin || null;
+}
+
+function stationDataManagerState(): StationDataManagerState {
+  if (!state.stationDataManager) {
+    state.stationDataManager = window.LilposStationDataManager?.defaultState
+      ? window.LilposStationDataManager.defaultState()
+      : {};
+  }
+  return state.stationDataManager;
+}
+
+async function refreshStationDataManager(options: any = {}) {
+  const api = stationDataManagerApi();
+  const sdm = stationDataManagerState();
+  if (!api) {
+    sdm.error = 'Station Data Manager API is not available.';
+    return;
+  }
+  sdm.loading = true;
+  sdm.error = '';
+  if (options.renderBefore !== false) render();
+  try {
+    const sections = await api.listSections();
+    const health = await api.getHealth();
+    sdm.sections = sections;
+    sdm.health = health;
+    if (!sdm.activeSectionId || !sections.some((section) => section.id === sdm.activeSectionId)) {
+      const firstAvailable = sections.find((section) => section.available);
+      sdm.activeSectionId = firstAvailable ? firstAvailable.id : '';
+    }
+    sdm.records = sdm.activeSectionId
+      ? await api.searchRecords(sdm.activeSectionId, sdm.query || '')
+      : [];
+    sdm.lastRefreshedAt = new Date().toISOString();
+    sdm.actionMessage = options.message || '';
+  } catch (err) {
+    sdm.error = err instanceof Error ? err.message : String(err || 'Unable to load local data.');
+  } finally {
+    sdm.loading = false;
+    render();
+  }
+}
+
+async function selectStationDataSection(sectionId) {
+  const api = stationDataManagerApi();
+  const sdm = stationDataManagerState();
+  if (!api) return;
+  sdm.activeSectionId = sectionId;
+  sdm.query = '';
+  sdm.selectedRecord = null;
+  sdm.loading = true;
+  render();
+  try {
+    sdm.records = await api.listRecords(sectionId);
+    sdm.error = '';
+  } catch (err) {
+    sdm.error = err instanceof Error ? err.message : String(err || 'Unable to load records.');
+  } finally {
+    sdm.loading = false;
+    render();
+  }
+}
+
+async function searchStationDataManager(query) {
+  const api = stationDataManagerApi();
+  const sdm = stationDataManagerState();
+  sdm.query = query;
+  if (!api || !sdm.activeSectionId) return;
+  try {
+    sdm.records = await api.searchRecords(sdm.activeSectionId, query);
+    sdm.error = '';
+  } catch (err) {
+    sdm.error = err instanceof Error ? err.message : String(err || 'Unable to search records.');
+  }
+  render();
+}
+
+function stationDataRecordById(recordId) {
+  return (stationDataManagerState().records || []).find((record) => record.id === recordId) || null;
+}
+
+async function copyStationDataRecord(recordId) {
+  const sdm = stationDataManagerState();
+  const record = stationDataRecordById(recordId);
+  if (!record || !window.LilposStationDataManager?.copyText) return;
+  await window.LilposStationDataManager.copyText(JSON.stringify(record.value, null, 2));
+  sdm.actionMessage = 'Record JSON copied.';
+  render();
+}
+
+function exportStationDataPayload(payload, prefix) {
+  if (!window.LilposStationDataManager?.downloadJson) return;
+  window.LilposStationDataManager.downloadJson(
+    payload,
+    window.LilposStationDataManager.jsonFileName(prefix)
+  );
+}
+
+async function exportStationDataSection() {
+  const api = stationDataManagerApi();
+  const sdm = stationDataManagerState();
+  if (!api || !sdm.activeSectionId) return;
+  const payload = await api.exportStore(sdm.activeSectionId);
+  exportStationDataPayload(payload, 'lilpos-local-section');
+  sdm.actionMessage = 'Current section exported.';
+  render();
+}
+
+async function exportAllStationData() {
+  const api = stationDataManagerApi();
+  const sdm = stationDataManagerState();
+  if (!api) return;
+  const payload = await api.exportAll();
+  exportStationDataPayload(payload, 'lilpos-local-all');
+  sdm.actionMessage = 'All local data exported.';
+  render();
+}
+
+async function requestStationPersistentStorage() {
+  const api = stationDataManagerApi();
+  const sdm = stationDataManagerState();
+  if (!api) return;
+  const result = await api.requestPersistentStorage();
+  sdm.actionMessage = result.granted ? 'Persistent storage granted.' : 'Persistent storage was not granted.';
+  await refreshStationDataManager({ renderBefore: false, message: sdm.actionMessage });
+}
+
+function renderStationDataManagerView() {
+  if (!window.LilposStationDataManagerView?.render) {
+    return '<div class="mgr-section-content"><h3>Station Data Manager</h3><p class="muted">Station Data Manager module is not available.</p></div>';
+  }
+  return window.LilposStationDataManagerView.render(stationDataManagerState());
+}
+
 const MANAGER_SETTINGS_TILES = [
   { id: 'system',      icon: '&#9881;',  title: 'System Status',     desc: 'Menu cache, online/offline, software status' },
   { id: 'install',     icon: '&#128640;',title: 'Application & Installation', desc: 'Install app, PWA features' },
@@ -7420,6 +7574,7 @@ const MANAGER_SETTINGS_TILES = [
   { id: 'permissions', icon: '&#128274;',title: 'Permissions',       desc: 'Role-based access control' },
   { id: 'keyboard',    icon: '&#9000;',  title: 'Keyboard Options',  desc: 'On-screen keyboard mode and behavior' },
   { id: 'stations',    icon: '&#128421;',title: 'Stations',          desc: 'Register and station settings' },
+  { id: 'stationdata', icon: '&#128451;',title: 'Station Data Manager', desc: 'View local station data, sync status, and storage health' },
   { id: 'ordersettings', icon: '&#128203;', title: 'Order Settings', desc: 'Order types, timing, and defaults' },
   { id: 'reports',     icon: '&#128200;',title: 'Reports',           desc: 'Sales summaries and activity' },
   { id: 'business',    icon: '&#127981;',title: 'Business Settings', desc: 'Name, address, hours, and tax' },
@@ -7490,6 +7645,22 @@ function renderManagerSettingsView() {
         </div>
         <div class="mgr-section-wrapper">
           ${renderManagerKeyboardOptionsView()}
+        </div>
+      </div>
+    `;
+  }
+  if (activeSection === 'stationdata') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrSectionBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          ${renderStationDataManagerView()}
         </div>
       </div>
     `;
@@ -8827,8 +8998,64 @@ function attachEvents() {
   document.querySelectorAll('[data-mgr-tile]').forEach((b) => {
     b.addEventListener('click', () => {
       state.managerSettingsSection = (b as HTMLElement).dataset.mgrTile || null;
+      if (state.managerSettingsSection === 'stationdata') {
+        void refreshStationDataManager({ renderBefore: false });
+      }
       render();
     });
+  });
+
+  $('#sdmRefresh')?.addEventListener('click', () => {
+    void refreshStationDataManager();
+  });
+
+  $('#sdmExportAll')?.addEventListener('click', () => {
+    void exportAllStationData();
+  });
+
+  $('#sdmExportStore')?.addEventListener('click', () => {
+    void exportStationDataSection();
+  });
+
+  $('#sdmPersistStorage')?.addEventListener('click', () => {
+    void requestStationPersistentStorage();
+  });
+
+  $('#sdmSearch')?.addEventListener('input', (event) => {
+    void searchStationDataManager((event.target as HTMLInputElement).value || '');
+  });
+
+  document.querySelectorAll('[data-sdm-section]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void selectStationDataSection((button as HTMLElement).dataset.sdmSection || '');
+    });
+  });
+
+  document.querySelectorAll('[data-sdm-view-record]').forEach((button) => {
+    button.addEventListener('click', () => {
+      stationDataManagerState().selectedRecord = stationDataRecordById((button as HTMLElement).dataset.sdmViewRecord || '');
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-sdm-copy-record]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void copyStationDataRecord((button as HTMLElement).dataset.sdmCopyRecord || '');
+    });
+  });
+
+  $('#sdmCopySelectedJson')?.addEventListener('click', () => {
+    const record = stationDataManagerState().selectedRecord;
+    if (!record || !window.LilposStationDataManager?.copyText) return;
+    void window.LilposStationDataManager.copyText(JSON.stringify(record.value, null, 2)).then(() => {
+      stationDataManagerState().actionMessage = 'Record JSON copied.';
+      render();
+    });
+  });
+
+  $('#sdmCloseJson')?.addEventListener('click', () => {
+    stationDataManagerState().selectedRecord = null;
+    render();
   });
 
   $('#toggleActivity')?.addEventListener('click', () => {
