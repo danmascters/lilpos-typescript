@@ -18,10 +18,12 @@ async function seedDb(factory: FDBFactory, dbName: string) {
       const db = req.result;
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
       if (!db.objectStoreNames.contains('order_history')) db.createObjectStore('order_history', { keyPath: 'historyId' });
+      if (!db.objectStoreNames.contains('payment_history')) db.createObjectStore('payment_history', { keyPath: 'paymentHistoryId' });
+      if (!db.objectStoreNames.contains('order_events')) db.createObjectStore('order_events', { keyPath: 'eventId' });
     };
     req.onsuccess = () => {
       const db = req.result;
-      const tx = db.transaction(['kv', 'order_history'], 'readwrite');
+      const tx = db.transaction(['kv', 'order_history', 'payment_history', 'order_events'], 'readwrite');
       tx.objectStore('kv').put({
         runtimeKind: 'lilpos-runtime-package-v1',
         generatedAt: '2026-07-23T12:00:00.000Z',
@@ -41,6 +43,17 @@ async function seedDb(factory: FDBFactory, dbName: string) {
         totalCents: 1200,
         syncStatus: 'pending',
         authToken: 'do-not-export'
+      });
+      tx.objectStore('payment_history').put({
+        paymentHistoryId: 'pay_1',
+        historyId: 'hist_1',
+        amountCents: 1200,
+        paymentType: 'cash'
+      });
+      tx.objectStore('order_events').put({
+        eventId: 'evt_1',
+        historyId: 'hist_1',
+        eventType: 'ORDER_CREATED'
       });
       tx.oncomplete = () => {
         db.close();
@@ -98,6 +111,17 @@ describe('Station Data Manager', () => {
 
       const exported = await admin.exportStore('orders.open');
       expect(exported.sections[0].records[0].value.authToken).toBe('[REDACTED]');
+
+      const clearResult = await admin.clearOrdersData();
+      expect(clearResult.cleared).toBe(true);
+      expect(clearResult.clearedStores).toEqual(['order_history', 'payment_history', 'order_events']);
+
+      const remainingOrders = await admin.listRecords('orders.open');
+      expect(remainingOrders.length).toBe(0);
+      const remainingPayments = await admin.listRecords('orders.payments');
+      expect(remainingPayments.length).toBe(0);
+      const remainingEvents = await admin.listRecords('orders.auditEvents');
+      expect(remainingEvents.length).toBe(0);
 
       const viewState = (dom.window as any).LilposStationDataManager.defaultState();
       viewState.sections = sections;

@@ -129,13 +129,15 @@ button:disabled {
 
 .lilpay-header h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: 28px;
+  font-weight: 800;
   color: #0f2357;
 }
 
 .lilpay-header p {
   margin: 2px 0 0;
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 600;
   color: #334155;
 }
 
@@ -168,7 +170,8 @@ button:disabled {
 }
 
 .lilpay-balance-label {
-  font-size: 16px;
+  font-size: 20px;
+  font-weight: 700;
   color: #475569;
   margin-bottom: 4px;
 }
@@ -188,9 +191,9 @@ button:disabled {
 }
 
 .lilpay-balance-tip-label {
-  font-size: 14px;
+  font-size: 18px;
   color: #0f2357;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .lilpay-balance-tip-value {
@@ -212,8 +215,8 @@ button:disabled {
   color: #0f2357;
   min-height: 52px;
   border-radius: 12px;
-  font-weight: 700;
-  font-size: 14px;
+  font-weight: 800;
+  font-size: 18px;
 }
 
 .lilpay-method-tab.active {
@@ -238,7 +241,8 @@ button:disabled {
 
 .lilpay-cash-col h3 {
   margin: 0 0 10px;
-  font-size: 20px;
+  font-size: 24px;
+  font-weight: 800;
   color: #0f2357;
 }
 
@@ -267,8 +271,8 @@ button:disabled {
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
 }
 
 .lilpay-keypad-split {
@@ -283,8 +287,8 @@ button:disabled {
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
 }
 
 .lilpay-keypad-clear {
@@ -305,8 +309,8 @@ button:disabled {
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 800;
 }
 
 .lilpay-quick-exact {
@@ -346,15 +350,16 @@ button:disabled {
 
 .lilpay-muted-note {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: 16px;
+  font-weight: 700;
   color: #475569;
 }
 
 .lilpay-error-note {
   margin: 10px 0 0;
-  font-size: 15px;
+  font-size: 18px;
   color: #b91c1c;
-  font-weight: 600;
+  font-weight: 800;
 }
 
 .lilpay-card-status {
@@ -392,15 +397,128 @@ button:disabled {
 
 .lilpay-card-subtitle {
   margin-top: 6px;
-  font-size: 21px;
+  font-size: 24px;
   color: #0f2357;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .lilpay-card-status.processing .lilpay-card-title,
 .lilpay-card-status.error .lilpay-card-title,
 .lilpay-card-status.declined .lilpay-card-title {
   color: #9a3412;
+}
+
+.lilpay-soft-terminal {
+  width: min(360px, 100%);
+  margin: 0 auto;
+  border-radius: 18px;
+  padding: 10px;
+  background: linear-gradient(180deg, #2e3136 0%, #17191c 100%);
+  border: 1px solid #0f1114;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 10px 20px rgba(15, 23, 42, 0.22);
+  display: grid;
+  gap: 10px;
+}
+
+.lilpay-soft-terminal-screen {
+  border-radius: 10px;
+  border: 1px solid #0f2432;
+  background: linear-gradient(180deg, #bde0f8 0%, #8ec5ec 100%);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.lilpay-soft-screen-row {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #102a43;
+  padding: 6px 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-family: "Consolas", "Courier New", monospace;
+}
+
+.lilpay-soft-screen-row span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.lilpay-soft-screen-row b {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.lilpay-soft-screen-row.active {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 1px rgba(29, 78, 216, 0.2);
+}
+
+.lilpay-soft-terminal-keypad {
+  border-radius: 12px;
+  padding: 10px;
+  background: linear-gradient(180deg, #252a31 0%, #181b1f 100%);
+  border: 1px solid #111317;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lilpay-soft-key {
+  min-height: 42px;
+  border-radius: 9px;
+  border: 1px solid #4b5563;
+  background: linear-gradient(180deg, #5a616c 0%, #373c44 100%);
+  color: #f8fafc;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.lilpay-soft-key:active {
+  transform: translateY(1px);
+}
+
+.lilpay-soft-key-clear {
+  background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+  border-color: #b91c1c;
+}
+
+.lilpay-soft-key-back {
+  background: linear-gradient(180deg, #fb923c 0%, #f97316 100%);
+  border-color: #ea580c;
+}
+
+.lilpay-soft-key-enter {
+  grid-column: 3;
+  background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%);
+  border-color: #15803d;
+}
+
+.lilpay-soft-terminal-status {
+  border-radius: 9px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #dbeafe;
+  padding: 8px 10px;
+}
+
+.lilpay-soft-terminal-status-title {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.lilpay-soft-terminal-status-detail {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #93c5fd;
 }
 
 .lilpay-card-secondary-actions {
@@ -433,8 +551,8 @@ button:disabled {
   border-radius: 12px;
   background: #fff;
   color: #0f2357;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 800;
 }
 
 .lilpay-sub-action.active {
@@ -459,14 +577,15 @@ button:disabled {
 }
 
 .lilpay-card-tip-amount-inline {
-  font-size: 16px;
+  font-size: 20px;
   color: #0f2357;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .lilpay-card-tip-panel h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 20px;
+  font-weight: 800;
   color: #0f2357;
 }
 
@@ -494,8 +613,45 @@ button:disabled {
 
 .lilpay-card-tip-grid .lilpay-sub-action {
   min-height: 40px;
-  font-size: 13px;
+  font-size: 22px;
+  font-weight: 900;
   padding: 8px 6px;
+}
+
+.lilpay-tip-jogger {
+  min-height: 40px;
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+}
+
+.lilpay-tip-jogger-value {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  color: #0f2357;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.lilpay-tip-jogger-btn {
+  min-height: 100%;
+  border: 0;
+  background: transparent;
+  color: #1f2937;
+  font-size: 38px;
+  font-weight: 900;
+  line-height: 1;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.lilpay-tip-jogger-btn:active {
+  background: #f8fafc;
 }
 
 .lilpay-card-tip-editor {
@@ -509,7 +665,8 @@ button:disabled {
 
 .lilpay-card-tip-editor h4 {
   margin: 0;
-  font-size: 15px;
+  font-size: 18px;
+  font-weight: 800;
   color: #0f2357;
 }
 
@@ -532,8 +689,8 @@ button:disabled {
 }
 
 .lilpay-cof-title {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 800;
   color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -604,8 +761,8 @@ button:disabled {
 }
 
 .lilpay-cof-last4 {
-  font-size: 17px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 800;
   color: #0f2357;
   letter-spacing: 0.5px;
   white-space: nowrap;
@@ -613,7 +770,8 @@ button:disabled {
 }
 
 .lilpay-cof-expiry {
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 700;
   color: #475569;
   white-space: nowrap;
   flex-shrink: 0;
@@ -673,7 +831,8 @@ button:disabled {
 }
 
 .lilpay-cof-confirm-desc {
-  font-size: 16px;
+  font-size: 18px;
+  font-weight: 600;
   color: #334155;
   margin: 0 0 20px;
 }
@@ -767,7 +926,7 @@ button:disabled {
   color: #c2410c;
 }
 .lilpay-text-link-status-title {
-  font-size: 28px;
+  font-size: 30px;
   line-height: 1.05;
   font-weight: 800;
   color: #0f2357;
@@ -803,7 +962,8 @@ button:disabled {
 
 .lilpay-text-link-status-detail {
   margin-top: 6px;
-  font-size: 16px;
+  font-size: 18px;
+  font-weight: 600;
   color: #334155;
 }
 
@@ -813,8 +973,8 @@ button:disabled {
 }
 
 .lilpay-text-link-label {
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 800;
   color: #0f2357;
 }
 
@@ -823,8 +983,8 @@ button:disabled {
   border: 1px solid #dbe4ef;
   border-radius: 12px;
   padding: 0 16px;
-  font-size: 24px;
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 800;
   color: #0f2357;
 }
 
@@ -867,12 +1027,14 @@ button:disabled {
 }
 
 .lilpay-split-header span {
-  font-size: 11px;
+  font-size: 14px;
+  font-weight: 700;
   color: #475569;
 }
 
 .lilpay-split-header b {
-  font-size: 15px;
+  font-size: 18px;
+  font-weight: 800;
   color: #0f172a;
 }
 
@@ -882,7 +1044,7 @@ button:disabled {
 }
 
 .lilpay-split-remaining b {
-  font-size: 20px;
+  font-size: 24px;
   color: #9a3412;
 }
 
@@ -903,17 +1065,17 @@ button:disabled {
 }
 
 .lilpay-split-custom-row label {
-  font-size: 12px;
+  font-size: 14px;
   color: #334155;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 #lilpaySplitAmount {
   border: 1px solid #cbd5e1;
   border-radius: 10px;
   padding: 8px 10px;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 800;
 }
 
 .lilpay-split-plan-list {
@@ -960,7 +1122,7 @@ button:disabled {
   justify-content: center;
   background: #e2e8f0;
   color: #334155;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -974,8 +1136,8 @@ button:disabled {
 .lilpay-split-status-pill {
   border-radius: 999px;
   padding: 2px 8px;
-  font-size: 10px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 800;
   border: 1px solid transparent;
   text-transform: uppercase;
 }
@@ -1009,8 +1171,8 @@ button:disabled {
 
 .lilpay-split-failure {
   color: #991b1b;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .lilpay-split-process-btn {
@@ -1018,7 +1180,8 @@ button:disabled {
 }
 
 .lilpay-split-footnote {
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 600;
   color: #64748b;
 }
 
@@ -1047,12 +1210,13 @@ button:disabled {
   gap: 8px;
   margin: 4px 0;
   color: #0f2357;
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .lilpay-summary-total {
   font-weight: 800;
-  font-size: 17px;
+  font-size: 20px;
 }
 
 .lilpay-remaining-box {
@@ -1063,7 +1227,8 @@ button:disabled {
   justify-content: space-between;
   align-items: center;
   margin-top: 10px;
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .lilpay-remaining-box b {
@@ -1078,7 +1243,8 @@ button:disabled {
 
 .lilpay-customer {
   color: #0f2357;
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 700;
   margin-bottom: 4px;
 }
 
@@ -1096,12 +1262,14 @@ button:disabled {
   grid-template-columns: 20px 1fr auto;
   gap: 6px;
   align-items: baseline;
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 700;
   color: #0f2357;
 }
 
 .lilpay-item-subtitle {
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 600;
   color: #64748b;
   margin: 0 0 8px 26px;
 }
@@ -1112,7 +1280,8 @@ button:disabled {
   gap: 8px;
   margin-top: 8px;
   color: #0f2357;
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .lilpay-actions-row {
@@ -1128,8 +1297,8 @@ button:disabled {
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 800;
   padding: 8px 10px;
   white-space: nowrap;
 }
@@ -1147,8 +1316,8 @@ button:disabled {
   border-radius: 10px;
   color: #991b1b;
   padding: 10px;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .topbar {
@@ -2224,6 +2393,63 @@ button:disabled {
   gap: 6px;
 }
 
+.order-mgmt-tile.compact {
+  min-height: 88px;
+  padding: 8px;
+  gap: 4px;
+}
+
+.order-mgmt-tile.compact .order-mgmt-mid small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.orders-mgmt-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.orders-mgmt-board-column {
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  background: #f8fafc;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 180px;
+}
+
+.orders-mgmt-board-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.orders-mgmt-board-column-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.orders-mgmt-board-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+}
+
+.orders-mgmt-board-list {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  align-content: start;
+}
+
 .orders-mgmt-rows {
   display: grid;
   gap: 6px;
@@ -2235,8 +2461,8 @@ button:disabled {
   --orders-col-customer: minmax(110px, 1.25fr);
   --orders-col-phone: minmax(96px, 0.82fr);
   --orders-col-type: minmax(70px, 0.66fr);
-  --orders-col-receivedTime: minmax(82px, 0.74fr);
-  --orders-col-dueTime: minmax(88px, 0.86fr);
+  --orders-col-receivedTime: minmax(156px, 1.02fr);
+  --orders-col-dueTime: minmax(178px, 1.14fr);
   --orders-col-source: minmax(62px, 0.58fr);
   --orders-col-payment: minmax(104px, 0.92fr);
   --orders-col-status: minmax(78px, 0.72fr);
@@ -4509,6 +4735,16 @@ button:disabled {
     font-size: 18px;
   }
 
+  .lilpay-soft-terminal {
+    width: 100%;
+    max-width: 340px;
+  }
+
+  .lilpay-soft-key {
+    min-height: 40px;
+    font-size: 24px;
+  }
+
   .lilpay-side-panel {
     flex-direction: column;
   }
@@ -4595,6 +4831,10 @@ button:disabled {
 
   .orders-view-toolbar {
     justify-content: flex-start;
+  }
+
+  .orders-mgmt-board {
+    grid-template-columns: 1fr;
   }
 
   .orders-mgmt-row {

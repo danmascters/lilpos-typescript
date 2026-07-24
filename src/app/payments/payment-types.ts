@@ -135,6 +135,11 @@ type PaymentPaneState = {
   cardTipSelection: CardTipSelection;
   cardTipCustomEditorOpen: boolean;
   cardTipCustomEditorCents: number;
+  cardEntryMode: 'terminal' | 'manual';
+  manualCardEntryField: 'pan' | 'exp' | 'cvv';
+  manualCardDigits: string;
+  manualCardExpiryDigits: string;
+  manualCardCvvDigits: string;
   textPaymentLinkStatus: TextPaymentLinkStatus;
   textPaymentLinkPhoneDigits: string;
   selectedSavedCardId: string | null;
@@ -226,10 +231,19 @@ type PaymentPaneAction =
   | { type: 'cof-remove-success'; id: string }
   | { type: 'cof-remove-failed'; id: string; message: string }
   | { type: 'set-card-status'; status: CardStatus; errorMessage?: string }
+  | { type: 'card-manual-open' }
+  | { type: 'card-manual-close' }
+  | { type: 'card-manual-focus-field'; field: 'pan' | 'exp' | 'cvv' }
+  | { type: 'card-manual-digit'; digit: string }
+  | { type: 'card-manual-backspace' }
+  | { type: 'card-manual-clear' }
+  | { type: 'card-manual-enter' }
   | { type: 'card-tip-set-percent'; percent: 10 | 15 | 20 }
   | { type: 'card-tip-increment-percent'; percent: 1 }
+  | { type: 'card-tip-decrement-percent'; percent: 1 }
   | { type: 'card-tip-set-fixed'; cents: number }
   | { type: 'card-tip-increment-fixed'; cents: number }
+  | { type: 'card-tip-decrement-fixed'; cents: number }
   | { type: 'card-tip-no-tip' }
   | { type: 'card-tip-open-custom' }
   | { type: 'card-tip-editor-digit'; digit: string }

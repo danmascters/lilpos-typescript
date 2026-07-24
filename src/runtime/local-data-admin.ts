@@ -2,6 +2,8 @@
   'use strict';
 
   var SECRET_FIELD_PATTERN = /password|secret|token|apiKey|authorization|auth|credential/i;
+  var LEGACY_ORDERS_STORAGE_KEY = 'lilpos_persisted_orders';
+  var ORDER_DATA_STORE_NAMES = ['order_history', 'payment_history', 'order_events'];
 
   var SECTION_GROUPS = [
     {
@@ -451,6 +453,49 @@
       };
     }
 
+    async function clearOrdersData(): Promise<any> {
+      if (!global.indexedDB) {
+        return {
+          cleared: false,
+          reason: 'IndexedDB is not available on this station.'
+        };
+      }
+
+      var db = await openDb();
+      try {
+        var availableStores = ORDER_DATA_STORE_NAMES.filter(function(storeName) {
+          return db.objectStoreNames.contains(storeName);
+        });
+        var missingStores = ORDER_DATA_STORE_NAMES.filter(function(storeName) {
+          return availableStores.indexOf(storeName) < 0;
+        });
+
+        if (availableStores.length) {
+          var tx = db.transaction(availableStores, 'readwrite');
+          availableStores.forEach(function(storeName) {
+            tx.objectStore(storeName).clear();
+          });
+          await txDone(tx);
+        }
+
+        try {
+          if (global.localStorage) {
+            global.localStorage.removeItem(LEGACY_ORDERS_STORAGE_KEY);
+          }
+        } catch (_err) {
+          // Ignore localStorage access errors in restricted contexts.
+        }
+
+        return {
+          cleared: true,
+          clearedStores: availableStores,
+          missingStores: missingStores
+        };
+      } finally {
+        db.close();
+      }
+    }
+
     return {
       getHealth: getHealth,
       listStores: storeNames,
@@ -462,6 +507,7 @@
       exportAll: exportAll,
       requestPersistentStorage: requestPersistentStorage,
       clearSafeStore: clearSafeStore,
+      clearOrdersData: clearOrdersData,
       redactForExport: redact
     };
   }

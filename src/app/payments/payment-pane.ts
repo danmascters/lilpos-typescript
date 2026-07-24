@@ -182,7 +182,6 @@ function renderPane(input: PaymentPaneInput, state: PaymentPaneState): string {
         <footer class="lilpay-actions-row">
           <button type="button" class="lilpay-action-btn" data-lilpay-back="1">Back</button>
           ${splitHasBalance ? '' : '<button type="button" class="lilpay-action-btn" data-lilpay-send-unpaid="1">Send Unpaid</button>'}
-          ${splitHasBalance ? '' : '<button type="button" class="lilpay-action-btn" data-lilpay-pay-send="1">Pay & Send</button>'}
           ${showExactChangeAction ? `<button type="button" class="lilpay-action-btn lilpay-quick-exact" data-lilpay-quick="exact">${exactChangeActionLabel(state)}</button>` : ''}
           <button
             type="button"

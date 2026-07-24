@@ -79,10 +79,16 @@
     var active = (state.sections || []).find(function(section) { return section.id === state.activeSectionId; }) || null;
     var records = state.records || [];
     var title = active ? active.label : 'Local Data';
+    var hasOrderSection = (state.sections || []).some(function(section) {
+      return String(section && section.id || '').indexOf('orders.') === 0;
+    });
     return '<div class="sdm-records-panel">'
       + '<div class="sdm-panel-head">'
       + '<div><h3>' + h(title) + '</h3><p class="muted">' + h(String(records.length)) + ' records shown</p></div>'
+      + '<div class="sdm-panel-head-actions">'
+      + '<button id="sdmClearOrdersData" class="btn-danger" ' + (hasOrderSection ? '' : 'disabled') + '>Clear All Orders Data</button>'
       + '<button id="sdmExportStore" class="btn-secondary" ' + (active ? '' : 'disabled') + '>Export Store</button>'
+      + '</div>'
       + '</div>'
       + '<div class="sdm-search-row"><input id="sdmSearch" data-keyboard-kind="text" placeholder="Search current section" value="' + h(state.query || '') + '" /></div>'
       + (records.length

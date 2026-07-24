@@ -37,11 +37,18 @@ const MAIN_VIEWS = {
 const DEFAULT_MANAGER_PIN = '1234';
 
 const ORDER_MGMT_FILTERS = {
+  all: 'all',
   open: 'open',
   completed: 'completed',
   online: 'online',
   future: 'future'
 };
+const ORDER_MGMT_QUEUE_FILTER_IDS = [
+  ORDER_MGMT_FILTERS.open,
+  ORDER_MGMT_FILTERS.completed,
+  ORDER_MGMT_FILTERS.online,
+  ORDER_MGMT_FILTERS.future
+];
 
 const STATION_NUMBER = 1; // Default station number, centralize here for future wire-up
 const MANAGER_SETTINGS_STORE_KEY = 'lilpos_manager_settings_v1';
@@ -462,7 +469,6 @@ const state: any = {
   stationDataManager: window.LilposStationDataManager?.defaultState ? window.LilposStationDataManager.defaultState() : {
     loading: false,
     error: '',
-    sections: [],
     activeSectionId: '',
     records: [],
     query: '',
@@ -1365,6 +1371,21 @@ const keyboardController = (() => {
     setTargetSelection(target, lastKnownSelection.start, lastKnownSelection.end);
   }
 
+  function setMoneyValueOnKeyboardTarget(target, nextValue, notifyChange = false) {
+    target.value = formatImpliedDecimalCurrencyInput(nextValue);
+    const end = target.value.length;
+    setTargetSelection(target, end);
+    dispatchKeyboardInput(target);
+    if (notifyChange) {
+      dispatchKeyboardChange(target);
+    }
+  }
+
+  function isMoneyKeyboardTarget(target) {
+    if (!target) return false;
+    return getKeyboardInputKind(target) === 'decimal';
+  }
+
   function focusKeyboardTarget() {
     const target = resolveActiveKeyboardTarget();
     if (!target || !document.contains(target)) return null;
@@ -1376,6 +1397,12 @@ const keyboardController = (() => {
   function insertTextIntoKeyboardTarget(text) {
     const target = focusKeyboardTarget();
     if (!target) return;
+    if (isMoneyKeyboardTarget(target)) {
+      if (!/^[0-9]$/.test(text)) return;
+      const digits = currencyDigits(target.value || '');
+      setMoneyValueOnKeyboardTarget(target, (digits + text).slice(0, 9));
+      return;
+    }
     const { value, start, end } = normalizeSelection(target);
     target.value = `${value.slice(0, start)}${text}${value.slice(end)}`;
     const nextCaret = start + text.length;
@@ -1386,6 +1413,11 @@ const keyboardController = (() => {
   function backspaceKeyboardTarget() {
     const target = focusKeyboardTarget();
     if (!target) return;
+    if (isMoneyKeyboardTarget(target)) {
+      const digits = currencyDigits(target.value || '');
+      setMoneyValueOnKeyboardTarget(target, digits.slice(0, -1));
+      return;
+    }
     const { value, start, end } = normalizeSelection(target);
     if (start === 0 && end === 0) return;
     if (start !== end) {
@@ -1402,6 +1434,10 @@ const keyboardController = (() => {
   function clearKeyboardTarget() {
     const target = focusKeyboardTarget();
     if (!target) return;
+    if (isMoneyKeyboardTarget(target)) {
+      setMoneyValueOnKeyboardTarget(target, '', true);
+      return;
+    }
     target.value = '';
     setTargetSelection(target, 0);
     dispatchKeyboardInput(target);
@@ -1525,6 +1561,7 @@ const keyboardController = (() => {
       const target = focusKeyboardTarget();
       if (!target) return;
       if (activeInputKind !== 'decimal') return;
+      if (isMoneyKeyboardTarget(target)) return;
       const value = String(target.value || '');
       if (value.includes('.')) return;
       insertTextIntoKeyboardTarget('.');
@@ -1918,7 +1955,7 @@ function baseMockOrders() {
   ];
 }
 
-state.mockOrders = baseMockOrders();
+state.mockOrders = [];
 
 function normalizePhone(value: string) {
   return String(value ?? '').replace(/\D/g, '').slice(0, 10);
@@ -2376,6 +2413,32 @@ function seedPaymentDialogForPaneCompletion(paymentType: string, amountDue: numb
   };
 }
 
+function paymentPaneManualEntryIsComplete(paneState: PaymentPaneState): boolean {
+  const panDigits = String(paneState.manualCardDigits || '').replace(/\D/g, '');
+  const expDigits = String(paneState.manualCardExpiryDigits || '').replace(/\D/g, '');
+  const cvvDigits = String(paneState.manualCardCvvDigits || '').replace(/\D/g, '');
+  const expMonth = Number(expDigits.slice(0, 2) || 0);
+  const panValid = panDigits.length >= 15 && panDigits.length <= 19;
+  const expValid = expDigits.length === 4 && expMonth >= 1 && expMonth <= 12;
+  const cvvValid = cvvDigits.length === 3 || cvvDigits.length === 4;
+  return panValid && expValid && cvvValid;
+}
+
+function paymentPaneManualCardBrand(paneState: PaymentPaneState): CardBrand {
+  const digits = String(paneState.manualCardDigits || '').replace(/\D/g, '');
+  if (!digits) return 'unknown';
+  if (digits.startsWith('4')) return 'visa';
+  if (/^5[1-5]/.test(digits) || /^2(2[2-9]|[3-6]|7[0-1]|720)/.test(digits)) return 'mastercard';
+  if (/^3[47]/.test(digits)) return 'amex';
+  if (/^6(?:011|5)/.test(digits)) return 'discover';
+  return 'unknown';
+}
+
+function paymentPaneManualCardLastFour(paneState: PaymentPaneState): string {
+  const digits = String(paneState.manualCardDigits || '').replace(/\D/g, '');
+  return digits.slice(-4);
+}
+
 function mockSendTextPaymentLink(phoneDigits: string): Promise<{ ok: boolean; status: TextPaymentLinkStatus; message?: string }> {
   return new Promise((resolve) => {
     window.setTimeout(() => {
@@ -2701,6 +2764,16 @@ async function handlePaymentPanePrimaryAction() {
   const isTextPaymentLink = paneState.selectedPaymentMethod === 'text-payment-link';
   const isOtherMethod = paneState.selectedPaymentMethod === 'gift-or-other';
   const cardTipAmountCents = isCard ? Math.max(0, Number(paneState.cardTipAmountCents || 0)) : 0;
+  const isManualCardEntry = isCard && !paneState.selectedSavedCardId && paneState.cardEntryMode === 'manual';
+
+  if (isManualCardEntry && !paymentPaneManualEntryIsComplete(paneState)) {
+    state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, {
+      type: 'set-error',
+      message: 'Complete PAN, expiration, and CVV on the soft terminal before charging.'
+    });
+    render();
+    return;
+  }
 
   if (!isCard && !isCash && !isTextPaymentLink && !isOtherMethod) {
     state.paymentPaneState = window.LilposPaymentPane.reducer(paneState, { type: 'set-error', message: 'This payment method is coming soon.' });
@@ -2837,9 +2910,15 @@ async function handlePaymentPanePrimaryAction() {
       paymentType = 'Cash';
     } else if (isCard) {
       const selectedCard = (paneInput.savedPaymentMethods || []).find((entry) => entry.savedPaymentMethodId === paneState.selectedSavedCardId) || null;
-      paymentType = selectedCard ? 'Card on File' : 'Credit/Debit Card';
-      cardBrand = selectedCard?.cardBrand || 'card';
-      cardLast4 = selectedCard?.lastFour || '';
+      const manualBrand = paymentPaneManualCardBrand(paneState);
+      const manualLast4 = paymentPaneManualCardLastFour(paneState);
+      paymentType = selectedCard
+        ? 'Card on File'
+        : isManualCardEntry
+        ? 'Manual Card Entry'
+        : 'Credit/Debit Card';
+      cardBrand = selectedCard?.cardBrand || (isManualCardEntry ? manualBrand : 'card');
+      cardLast4 = selectedCard?.lastFour || (isManualCardEntry ? manualLast4 : '');
       tipAmountCents = cardTipAmountCents;
     }
 
@@ -2876,12 +2955,18 @@ async function handlePaymentPanePrimaryAction() {
   if (isCard) {
     if (isOrderContext) {
       const selectedCard = (paneInput.savedPaymentMethods || []).find((entry) => entry.savedPaymentMethodId === paneState.selectedSavedCardId) || null;
+      const manualBrand = paymentPaneManualCardBrand(paneState);
+      const manualLast4 = paymentPaneManualCardLastFour(paneState);
       await completeSelectedOrderPaymentFromPane({
-        paymentType: selectedCard ? 'Card on File' : 'Credit/Debit Card',
+        paymentType: selectedCard
+          ? 'Card on File'
+          : isManualCardEntry
+          ? 'Manual Card Entry'
+          : 'Credit/Debit Card',
         amountCents: paneState.remainingBalanceCents,
         tipAmountCents: cardTipAmountCents,
-        cardBrand: selectedCard?.cardBrand || '',
-        lastFour: selectedCard?.lastFour || ''
+        cardBrand: selectedCard?.cardBrand || (isManualCardEntry ? manualBrand : ''),
+        lastFour: selectedCard?.lastFour || (isManualCardEntry ? manualLast4 : '')
       });
       render();
       return;
@@ -4692,7 +4777,7 @@ async function generateSeed(scale) {
 
 async function clearAll() {
   await lilposDataService.clearRuntimeCache();
-  Object.assign(state, { menu: null, metrics: {}, cart: [], selected: null, idx: null, category: VIEW_ALL_ITEMS, favoriteCategoryIds: [], sentOrdersToday: [], orderSpecialInstructions: '' });
+  Object.assign(state, { menu: null, metrics: {}, cart: [], selected: null, idx: null, category: VIEW_ALL_ITEMS, favoriteCategoryIds: [], sentOrdersToday: [], orderSpecialInstructions: '', mockOrders: [] });
   state.removeConfirmLineId = null;
   state.orderTypeDraftDialog = { open: false, type: null, name: '', phone: '', tableNumber: '' };
   state.orderTypeDetails = { togoName: '', togoPhone: '', dineInTableNumber: '' };
@@ -4800,7 +4885,8 @@ function orderQueueChips() {
     { id: ORDER_MGMT_FILTERS.open, label: 'Open' },
     { id: ORDER_MGMT_FILTERS.completed, label: 'Completed' },
     { id: ORDER_MGMT_FILTERS.online, label: 'Online Only' },
-    { id: ORDER_MGMT_FILTERS.future, label: 'Future Orders' }
+    { id: ORDER_MGMT_FILTERS.future, label: 'Future Orders' },
+    { id: ORDER_MGMT_FILTERS.all, label: 'All' }
   ];
 }
 
@@ -4812,12 +4898,27 @@ function ordersManagementRowCustomerDetails(order) {
   };
 }
 
+function ordersManagementDatePrefix(value: any): string {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const localDate = `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+  if (localDate === nowLocalParts().date) return 'Today';
+  const weekday = parsed.toLocaleDateString([], { weekday: 'short' }).toUpperCase();
+  const month = parsed.getMonth() + 1;
+  const day = parsed.getDate();
+  const yy = String(parsed.getFullYear()).slice(-2);
+  return `${weekday} ${month}/${day}/${yy}`;
+}
+
 function ordersManagementReceivedTimeLabel(order) {
   const createdTs = order?.createdTimestamp;
   if (createdTs) {
     const parsed = new Date(createdTs);
     if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const prefix = ordersManagementDatePrefix(parsed);
+      const time = parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return `${prefix} ${time}`.trim();
     }
   }
   return String(order?.timeLabel || '').trim();
@@ -4826,14 +4927,25 @@ function ordersManagementReceivedTimeLabel(order) {
 function ordersManagementDueTimeLabel(order) {
   const timingType = String(order?.timingType || '').toLowerCase();
   if (timingType === 'future' && order?.futureDateTime) {
+    const future = new Date(order.futureDateTime);
+    if (!Number.isNaN(future.getTime())) {
+      const prefix = ordersManagementDatePrefix(future);
+      const time = future.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return `${prefix} ${time}`.trim();
+    }
     return formatFutureLabel(order.futureDateTime) || 'Future';
   }
   const asapTime = String(order?.asapTime || '').trim();
+  const created = order?.createdTimestamp ? new Date(order.createdTimestamp) : null;
+  const prefix = created && !Number.isNaN(created.getTime())
+    ? ordersManagementDatePrefix(created)
+    : 'Today';
   if (asapTime) {
     const label = formatTimeValueLabel(asapTime);
-    return label ? `ASAP ${label}` : 'ASAP';
+    const due = label ? `ASAP ${label}` : 'ASAP';
+    return `${prefix} ${due}`.trim();
   }
-  return 'ASAP';
+  return `${prefix} ASAP`.trim();
 }
 
 function ordersManagementDueTimestamp(order) {
@@ -4844,7 +4956,11 @@ function ordersManagementDueTimestamp(order) {
   }
   const asapTime = String(order?.asapTime || '').trim();
   if (asapTime) {
-    const parsed = parseLocalDateTime(nowLocalParts().date, asapTime);
+    const created = order?.createdTimestamp ? new Date(order.createdTimestamp) : null;
+    const referenceDate = created && !Number.isNaN(created.getTime())
+      ? `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}-${String(created.getDate()).padStart(2, '0')}`
+      : nowLocalParts().date;
+    const parsed = parseLocalDateTime(referenceDate, asapTime);
     return parsed ? parsed.getTime() : 0;
   }
   return 0;
@@ -4885,9 +5001,19 @@ async function persistOrdersManagementViewPreferences(preferences) {
 
 function setOrdersManagementViewModeForActiveQueue(viewMode) {
   const api = ordersManagementViewApi();
-  const nextPreferences = api?.setViewModeForQueue
-    ? api.setViewModeForQueue(state.ordersViewPreferences, state.ordersFilter, viewMode)
-    : defaultOrdersManagementViewPreferences();
+  let nextPreferences = state.ordersViewPreferences;
+  if (api?.setViewModeForQueue) {
+    // BOARD is intended as a unified multi-queue view, so keep queue preferences aligned.
+    if (String(viewMode || '').toUpperCase() === 'BOARD' || state.ordersFilter === ORDER_MGMT_FILTERS.all) {
+      ORDER_MGMT_QUEUE_FILTER_IDS.forEach((queueFilterId) => {
+        nextPreferences = api.setViewModeForQueue(nextPreferences, queueFilterId, viewMode);
+      });
+    } else {
+      nextPreferences = api.setViewModeForQueue(state.ordersViewPreferences, state.ordersFilter, viewMode);
+    }
+  } else {
+    nextPreferences = defaultOrdersManagementViewPreferences();
+  }
   state.ordersViewPreferences = nextPreferences;
   void persistOrdersManagementViewPreferences(nextPreferences);
 }
@@ -4978,7 +5104,7 @@ function filteredOrderManagementRows(options: any = {}) {
       onlineOnly: String(order.orderSource || '').toLowerCase() === 'online',
       timeLabel: order.timingType === 'future' && order.futureDateTime
         ? `Future: ${formatFutureLabel(order.futureDateTime)}`
-        : new Date(order.createdTimestamp).toLocaleTimeString(),
+        : ordersManagementReceivedTimeLabel(order),
       receivedTimeLabel: ordersManagementReceivedTimeLabel(order),
       dueTimeLabel: ordersManagementDueTimeLabel(order),
       dueTimestamp: ordersManagementDueTimestamp(order),
@@ -5004,7 +5130,7 @@ function filteredOrderManagementRows(options: any = {}) {
       paid: typeof order.paid === 'boolean' ? order.paid : order.status === 'completed',
       timeLabel: order.timingType === 'future' && order.futureDateTime
         ? `Future: ${formatFutureLabel(order.futureDateTime)}`
-        : order.timeLabel,
+        : ordersManagementReceivedTimeLabel(order),
       receivedTimeLabel: ordersManagementReceivedTimeLabel(order),
       dueTimeLabel: ordersManagementDueTimeLabel(order),
       dueTimestamp: ordersManagementDueTimestamp(order),
@@ -7165,12 +7291,13 @@ function orderManagementPaymentBadge(order, partialLabel = 'PARTIAL') {
   };
 }
 
-function renderOrderTile(order) {
+function renderOrderTile(order, options: any = {}) {
+  const compact = !!options.compact;
   const typeLabel = ORDER_TYPES[order.orderType] || order.orderType;
   const paymentBadge = orderManagementPaymentBadge(order);
   const displayNumber = formatOrderNumberForDisplay(order.number);
   return `
-    <button class="order-mgmt-tile" data-open-order="${order.id}">
+    <button class="order-mgmt-tile${compact ? ' compact' : ''}" data-open-order="${order.id}">
       <div class="order-tile-badge-row">
         <span class="order-payment-badge ${paymentBadge.paidClass}">${paymentBadge.paidText}</span>
       </div>
@@ -7212,6 +7339,43 @@ function renderOrderManagementRows(rows, columnLayout) {
   });
 }
 
+function renderOrdersManagementQueueBoard() {
+  const api = ordersManagementViewApi();
+  const queueColumns = orderQueueChips().filter((chip) => chip.id !== ORDER_MGMT_FILTERS.all);
+  const boardColumns = queueColumns.map((chip) => {
+    const queueRows = filteredOrderManagementRows({ queueFilter: chip.id, applyQuery: true });
+    const queueLayout = api?.columnLayoutForQueue
+      ? api.columnLayoutForQueue(state.ordersViewPreferences, chip.id)
+      : { order: [], sort: null };
+    const sortedRows = sortOrdersManagementRows(queueRows, queueLayout);
+    const tilesHtml = sortedRows.length
+      ? sortedRows.map((order) => renderOrderTile(order, { compact: true })).join('')
+      : '<p class="muted">No matching orders.</p>';
+    return {
+      id: chip.id,
+      label: chip.label,
+      count: sortedRows.length,
+      hasRows: sortedRows.length > 0,
+      html: `
+        <section class="orders-mgmt-board-column" data-orders-board-column="${chip.id}">
+          <div class="orders-mgmt-board-column-head">
+            <h4>${h(chip.label)}</h4>
+            <span class="orders-mgmt-board-count">(${sortedRows.length})</span>
+          </div>
+          <div class="orders-mgmt-board-list">
+            ${tilesHtml}
+          </div>
+        </section>
+      `
+    };
+  });
+
+  return {
+    hasRows: boardColumns.some((column) => column.hasRows),
+    html: `<div class="orders-mgmt-board">${boardColumns.map((column) => column.html).join('')}</div>`
+  };
+}
+
 function renderOrdersManagementView() {
   const columnLayout = currentOrdersManagementColumnLayout();
   const rows = sortOrdersManagementRows(filteredOrderManagementRows(), columnLayout);
@@ -7220,7 +7384,11 @@ function renderOrdersManagementView() {
   const viewSwitchHtml = ordersManagementViewApi()?.renderViewModeSwitch
     ? ordersManagementViewApi().renderViewModeSwitch({ activeMode: activeViewMode, h })
     : '';
-  const resultsHtml = activeViewMode === 'ROWS'
+  const boardResult = activeViewMode === 'BOARD' ? renderOrdersManagementQueueBoard() : null;
+  const hasRowsForMode = activeViewMode === 'BOARD' ? !!boardResult?.hasRows : rows.length > 0;
+  const resultsHtml = activeViewMode === 'BOARD'
+    ? boardResult?.html || ''
+    : activeViewMode === 'ROWS'
     ? renderOrderManagementRows(rows, columnLayout)
     : `<div class="orders-mgmt-grid">
         ${rows.length ? rows.map((order) => renderOrderTile(order)).join('') : '<p class="muted">No matching orders for this filter.</p>'}
@@ -7247,7 +7415,7 @@ function renderOrdersManagementView() {
       <div class="orders-view-toolbar">
         ${viewSwitchHtml}
       </div>
-      ${rows.length ? resultsHtml : `<div class="${activeViewMode === 'ROWS' ? 'orders-mgmt-rows is-empty' : 'orders-mgmt-grid'}"><p class="muted">No matching orders for this filter.</p></div>`}
+      ${hasRowsForMode ? resultsHtml : `<div class="${activeViewMode === 'ROWS' ? 'orders-mgmt-rows is-empty' : activeViewMode === 'BOARD' ? 'orders-mgmt-board is-empty' : 'orders-mgmt-grid'}"><p class="muted">No matching orders for this filter.</p></div>`}
     </section>
   `;
 }
@@ -7550,6 +7718,41 @@ async function requestStationPersistentStorage() {
   const result = await api.requestPersistentStorage();
   sdm.actionMessage = result.granted ? 'Persistent storage granted.' : 'Persistent storage was not granted.';
   await refreshStationDataManager({ renderBefore: false, message: sdm.actionMessage });
+}
+
+async function clearAllStationOrdersData() {
+  const api = stationDataManagerApi();
+  const sdm = stationDataManagerState();
+  if (!api) return;
+
+  const confirmed = window.confirm('Clear all local orders data for this station? This removes open/completed orders, payment records, and order audit events.');
+  if (!confirmed) return;
+
+  sdm.loading = true;
+  sdm.error = '';
+  sdm.actionMessage = '';
+  render();
+
+  try {
+    const result = typeof api.clearOrdersData === 'function'
+      ? await api.clearOrdersData()
+      : await api.clearSafeStore('orders');
+
+    const clearedCount = Number(result?.clearedStores?.length || 0);
+    const missingCount = Number(result?.missingStores?.length || 0);
+    const message = result?.cleared
+      ? `Order data cleared from ${clearedCount} store${clearedCount === 1 ? '' : 's'}${missingCount ? ` (${missingCount} store${missingCount === 1 ? '' : 's'} unavailable)` : ''}.`
+      : String(result?.reason || 'Order data clear was not completed.');
+
+    state.selectedOrderId = null;
+    state.persistedOrdersCache = [];
+    await refreshPersistedOrdersCache({ refreshNextOrderNumber: true, renderAfter: false });
+    await refreshStationDataManager({ renderBefore: false, message });
+  } catch (err) {
+    sdm.loading = false;
+    sdm.error = err instanceof Error ? err.message : String(err || 'Unable to clear orders data.');
+    render();
+  }
 }
 
 function renderStationDataManagerView() {
@@ -9021,6 +9224,10 @@ function attachEvents() {
     void requestStationPersistentStorage();
   });
 
+  $('#sdmClearOrdersData')?.addEventListener('click', () => {
+    void clearAllStationOrdersData();
+  });
+
   $('#sdmSearch')?.addEventListener('input', (event) => {
     void searchStationDataManager((event.target as HTMLInputElement).value || '');
   });
@@ -9920,6 +10127,20 @@ function attachEvents() {
     });
   });
 
+  document.querySelectorAll('[data-lilpay-card-tip-dec-percent]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const percent = Number((btn as HTMLElement).dataset.lilpayCardTipDecPercent || 0);
+      if (percent !== 1) return;
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'card-tip-decrement-percent',
+        percent: 1
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
   document.querySelectorAll('[data-lilpay-card-tip-fixed]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!state.paymentPaneState) return;
@@ -9939,6 +10160,19 @@ function attachEvents() {
       const cents = Math.max(0, Number((btn as HTMLElement).dataset.lilpayCardTipIncFixed || 0));
       state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
         type: 'card-tip-increment-fixed',
+        cents
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-card-tip-dec-fixed]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState) return;
+      const cents = Math.max(0, Number((btn as HTMLElement).dataset.lilpayCardTipDecFixed || 0));
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'card-tip-decrement-fixed',
         cents
       });
       await persistSplitWorkspaceFromPaneState();
@@ -10088,10 +10322,48 @@ function attachEvents() {
   $('[data-lilpay-manual-entry="1"]')?.addEventListener('click', () => {
     if (!state.paymentPaneState) return;
     state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
-      type: 'set-error',
-      message: 'Manual card entry is not wired yet.'
+      type: state.paymentPaneState.cardEntryMode === 'manual' ? 'card-manual-close' : 'card-manual-open'
     });
     render();
+  });
+
+  document.querySelectorAll('[data-lilpay-manual-field]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!state.paymentPaneState) return;
+      const field = String((btn as HTMLElement).dataset.lilpayManualField || 'pan');
+      if (!['pan', 'exp', 'cvv'].includes(field)) return;
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'card-manual-focus-field',
+        field: field as 'pan' | 'exp' | 'cvv'
+      });
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-manual-key]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!state.paymentPaneState) return;
+      const key = String((btn as HTMLElement).dataset.lilpayManualKey || '');
+      if (/^[0-9]$/.test(key)) {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+          type: 'card-manual-digit',
+          digit: key
+        });
+      } else if (key === 'backspace') {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+          type: 'card-manual-backspace'
+        });
+      } else if (key === 'clear') {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+          type: 'card-manual-clear'
+        });
+      } else if (key === 'enter') {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+          type: 'card-manual-enter'
+        });
+      }
+      render();
+    });
   });
 
   $('[data-lilpay-split-payment="1"]')?.addEventListener('click', () => {

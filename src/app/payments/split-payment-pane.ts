@@ -93,7 +93,7 @@ function splitPaymentPaneHtml(input: PaymentPaneInput, state: PaymentPaneState):
       ` : `
         <div class="lilpay-split-custom-row">
           <label for="lilpaySplitAmount">Next Amount</label>
-          <input id="lilpaySplitAmount" type="text" inputmode="numeric" value="${formatCents(workspace.amountEditorCents)}" data-lilpay-split-amount="1" />
+          <input id="lilpaySplitAmount" type="text" inputmode="decimal" data-keyboard-kind="decimal" value="${formatCents(workspace.amountEditorCents)}" data-lilpay-split-amount="1" />
           <div class="lilpay-split-method-select">
             <button type="button" class="lilpay-sub-action" data-lilpay-split-add="cash">Cash</button>
             <button type="button" class="lilpay-sub-action" data-lilpay-split-add="card">Credit</button>

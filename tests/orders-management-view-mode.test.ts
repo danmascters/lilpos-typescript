@@ -161,7 +161,7 @@ describe('Orders Management view mode helper', () => {
       const host = dom.window.document.createElement('div');
       host.innerHTML = html;
 
-      expect(host.querySelector('.orders-mgmt-row-head')?.textContent).toContain('Received Time');
+      expect(host.querySelector('.orders-mgmt-row-head')?.textContent).toContain('Placed At');
       expect(host.querySelector('.orders-mgmt-row-head')?.textContent).toContain('Due Time');
       expect(host.querySelector('[data-orders-sort-column="receivedTime"]')).not.toBeNull();
       expect(host.querySelector('[data-orders-column-id="phone"]')?.getAttribute('draggable')).toBe('true');

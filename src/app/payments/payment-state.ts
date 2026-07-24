@@ -28,6 +28,11 @@ function createStateFromInput(input: PaymentPaneInput): PaymentPaneState {
     cardTipSelection: 'no-tip' as CardTipSelection,
     cardTipCustomEditorOpen: false,
     cardTipCustomEditorCents: 0,
+    cardEntryMode: 'terminal',
+    manualCardEntryField: 'pan',
+    manualCardDigits: '',
+    manualCardExpiryDigits: '',
+    manualCardCvvDigits: '',
     textPaymentLinkStatus: 'ready',
     textPaymentLinkPhoneDigits: normalizePhoneDigits(input.customer?.phone || ''),
     selectedSavedCardId: null,
@@ -112,6 +117,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       ...state,
       selectedPaymentMethod: action.method,
       selectedSavedCardId: action.method === 'card' ? state.selectedSavedCardId : null,
+      cardEntryMode: action.method === 'card' ? state.cardEntryMode : 'terminal',
       cardTipCustomEditorOpen: action.method === 'card' ? state.cardTipCustomEditorOpen : false,
       removingCardId: null,
       removingCardError: '',
@@ -163,6 +169,115 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
     return {
       ...state,
       selectedSavedCardId: action.id,
+      cardEntryMode: action.id ? 'terminal' : state.cardEntryMode,
+      cardStatus: 'ready',
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-manual-open') {
+    return {
+      ...state,
+      selectedSavedCardId: null,
+      cardEntryMode: 'manual',
+      manualCardEntryField: state.manualCardEntryField || 'pan',
+      cardStatus: 'ready',
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-manual-close') {
+    return {
+      ...state,
+      cardEntryMode: 'terminal',
+      cardStatus: 'ready',
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-manual-focus-field') {
+    return {
+      ...state,
+      manualCardEntryField: action.field,
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-manual-digit') {
+    const digit = String(action.digit || '');
+    if (!/^[0-9]$/.test(digit)) return state;
+    if (state.manualCardEntryField === 'exp') {
+      return {
+        ...state,
+        manualCardExpiryDigits: (state.manualCardExpiryDigits + digit).slice(0, 4),
+        errorMessage: ''
+      };
+    }
+    if (state.manualCardEntryField === 'cvv') {
+      return {
+        ...state,
+        manualCardCvvDigits: (state.manualCardCvvDigits + digit).slice(0, 4),
+        errorMessage: ''
+      };
+    }
+    return {
+      ...state,
+      manualCardDigits: (state.manualCardDigits + digit).slice(0, 19),
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-manual-backspace') {
+    if (state.manualCardEntryField === 'exp') {
+      return {
+        ...state,
+        manualCardExpiryDigits: state.manualCardExpiryDigits.slice(0, -1),
+        errorMessage: ''
+      };
+    }
+    if (state.manualCardEntryField === 'cvv') {
+      return {
+        ...state,
+        manualCardCvvDigits: state.manualCardCvvDigits.slice(0, -1),
+        errorMessage: ''
+      };
+    }
+    return {
+      ...state,
+      manualCardDigits: state.manualCardDigits.slice(0, -1),
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-manual-clear') {
+    return {
+      ...state,
+      manualCardDigits: '',
+      manualCardExpiryDigits: '',
+      manualCardCvvDigits: '',
+      manualCardEntryField: 'pan',
+      cardStatus: 'ready',
+      errorMessage: ''
+    };
+  }
+
+  if (action.type === 'card-manual-enter') {
+    const panDigits = String(state.manualCardDigits || '');
+    const expDigits = String(state.manualCardExpiryDigits || '');
+    const cvvDigits = String(state.manualCardCvvDigits || '');
+    const expMonth = Number(expDigits.slice(0, 2) || 0);
+    const panValid = panDigits.length >= 15 && panDigits.length <= 19;
+    const expValid = expDigits.length === 4 && expMonth >= 1 && expMonth <= 12;
+    const cvvValid = cvvDigits.length === 3 || cvvDigits.length === 4;
+    if (!panValid || !expValid || !cvvValid) {
+      return {
+        ...state,
+        cardStatus: 'declined',
+        errorMessage: 'Enter card number, expiration, and CVV before continuing.'
+      };
+    }
+    return {
+      ...state,
       cardStatus: 'ready',
       errorMessage: ''
     };
@@ -238,6 +353,20 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
     });
   }
 
+  if (action.type === 'card-tip-decrement-percent') {
+    const decrementBasisPoints = Math.max(0, Number(action.percent || 0)) * 100;
+    const nextBasisPoints = Math.max(0, Math.max(0, Number(state.cardTipPercentBasisPoints || 0)) - decrementBasisPoints);
+    const hasAnyTip = nextBasisPoints > 0 || Math.max(0, Number(state.cardTipFixedCents || 0)) > 0;
+    return withRecomputedCardTip({
+      ...state,
+      cardTipPercentBasisPoints: nextBasisPoints,
+      cardTipSelection: hasAnyTip ? 'mixed' : 'no-tip',
+      cardTipCustomEditorOpen: false,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    });
+  }
+
   if (action.type === 'card-tip-set-fixed') {
     const fixedCents = Math.max(0, Number(action.cents || 0));
     const selection: CardTipSelection = fixedCents === 500
@@ -263,6 +392,19 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       ...state,
       cardTipFixedCents: Math.max(0, Number(state.cardTipFixedCents || 0)) + Math.max(0, Number(action.cents || 0)),
       cardTipSelection: 'mixed',
+      cardTipCustomEditorOpen: false,
+      cardTipCustomEditorCents: 0,
+      errorMessage: ''
+    });
+  }
+
+  if (action.type === 'card-tip-decrement-fixed') {
+    const nextFixedCents = Math.max(0, Math.max(0, Number(state.cardTipFixedCents || 0)) - Math.max(0, Number(action.cents || 0)));
+    const hasAnyTip = nextFixedCents > 0 || Math.max(0, Number(state.cardTipPercentBasisPoints || 0)) > 0;
+    return withRecomputedCardTip({
+      ...state,
+      cardTipFixedCents: nextFixedCents,
+      cardTipSelection: hasAnyTip ? 'mixed' : 'no-tip',
       cardTipCustomEditorOpen: false,
       cardTipCustomEditorCents: 0,
       errorMessage: ''

@@ -69,6 +69,29 @@ describe('payment state', () => {
     expect(stayed.selectedSavedCardId).toBe('pm_001');
   });
 
+  it('supports manual card entry keypad field input and enter validation', () => {
+    let state = createStateFromInput(input);
+    state = reducer(state, { type: 'select-method', method: 'card' });
+    state = reducer(state, { type: 'card-manual-open' });
+
+    for (const d of '4111111111111111') {
+      state = reducer(state, { type: 'card-manual-digit', digit: d });
+    }
+    state = reducer(state, { type: 'card-manual-focus-field', field: 'exp' });
+    for (const d of '1229') {
+      state = reducer(state, { type: 'card-manual-digit', digit: d });
+    }
+    state = reducer(state, { type: 'card-manual-focus-field', field: 'cvv' });
+    for (const d of '123') {
+      state = reducer(state, { type: 'card-manual-digit', digit: d });
+    }
+
+    const confirmed = reducer(state, { type: 'card-manual-enter' });
+    expect(confirmed.cardStatus).toBe('ready');
+    expect(confirmed.errorMessage).toBe('');
+    expect(confirmed.manualCardDigits.endsWith('1111')).toBe(true);
+  });
+
   it('initiates and cancels card removal', () => {
     const state = createStateFromInput(input);
     const removing = reducer(state, { type: 'cof-initiate-remove', id: 'pm_001' });

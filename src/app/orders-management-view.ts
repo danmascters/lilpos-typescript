@@ -1,7 +1,7 @@
 (function(global: any) {
   'use strict';
 
-  type OrdersQueueViewMode = 'STANDARD' | 'ROWS';
+  type OrdersQueueViewMode = 'STANDARD' | 'ROWS' | 'BOARD';
   type OrdersQueuePreferenceKey = 'open' | 'completed' | 'onlineOnly' | 'futureOrders';
 
   type OrdersManagementViewPreferences = {
@@ -35,6 +35,7 @@
 
   var VIEW_MODE_STANDARD: OrdersQueueViewMode = 'STANDARD';
   var VIEW_MODE_ROWS: OrdersQueueViewMode = 'ROWS';
+  var VIEW_MODE_BOARD: OrdersQueueViewMode = 'BOARD';
 
   var QUEUE_PREF_KEYS: Record<string, OrdersQueuePreferenceKey> = {
     open: 'open',
@@ -70,7 +71,10 @@
   }, {});
 
   function normalizeViewMode(value: any): OrdersQueueViewMode {
-    return String(value || '').toUpperCase() === VIEW_MODE_ROWS ? VIEW_MODE_ROWS : VIEW_MODE_STANDARD;
+    var normalized = String(value || '').toUpperCase();
+    if (normalized === VIEW_MODE_ROWS) return VIEW_MODE_ROWS;
+    if (normalized === VIEW_MODE_BOARD) return VIEW_MODE_BOARD;
+    return VIEW_MODE_STANDARD;
   }
 
   function normalizePreferences(input: any): OrdersManagementViewPreferences {
@@ -189,7 +193,8 @@
     var h = input && input.h || function(value: any) { return String(value == null ? '' : value); };
     var options = [
       { mode: VIEW_MODE_STANDARD, label: 'Tiles' },
-      { mode: VIEW_MODE_ROWS, label: 'Rows' }
+      { mode: VIEW_MODE_ROWS, label: 'Rows' },
+      { mode: VIEW_MODE_BOARD, label: 'Queues' }
     ];
     return '<div class="orders-view-switch" role="group" aria-label="Orders display mode">'
       + options.map(function(option) {
@@ -298,6 +303,7 @@
   global.LilposOrdersManagement = {
     VIEW_MODE_STANDARD: VIEW_MODE_STANDARD,
     VIEW_MODE_ROWS: VIEW_MODE_ROWS,
+    VIEW_MODE_BOARD: VIEW_MODE_BOARD,
     DEFAULT_VIEW_PREFERENCES: DEFAULT_VIEW_PREFERENCES,
     normalizeViewMode: normalizeViewMode,
     normalizePreferences: normalizePreferences,

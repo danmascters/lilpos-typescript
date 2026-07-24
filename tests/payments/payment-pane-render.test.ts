@@ -41,6 +41,20 @@ describe('payment pane render', () => {
     expect(html).toContain('Custom Amount');
   });
 
+  it('renders soft terminal manual card entry when manual mode is active', () => {
+    const state = {
+      ...createStateFromInput(input),
+      selectedPaymentMethod: 'card',
+      cardEntryMode: 'manual',
+      manualCardEntryField: 'pan'
+    };
+    const html = renderPane(input, state);
+    expect(html).toContain('Soft card terminal for manual entry');
+    expect(html).toContain('data-lilpay-manual-key="1"');
+    expect(html).toContain('data-lilpay-manual-field="pan"');
+    expect(html).toContain('Use Physical Terminal');
+  });
+
   it('renders card tip value in consolidated controls and top balance summary', () => {
     const state = {
       ...createStateFromInput(input),
@@ -148,7 +162,6 @@ describe('payment pane render', () => {
     expect(html).toContain('lilpay-quick-exact');
     expect(html).toContain('data-lilpay-quick="exact"');
     expect(html).toContain('Exact Change $27.05');
-    expect(html).toContain('Pay & Send');
     expect(html).toContain('Complete Cash Sale');
   });
 });

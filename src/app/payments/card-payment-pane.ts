@@ -5,7 +5,7 @@ function cardStatusCopy(status: CardStatus): { title: string; subtitle: string; 
   if (status === 'approved') return { title: 'Payment approved', subtitle: 'Ready to complete', toneClass: 'approved', showRetry: false };
   if (status === 'declined') return { title: 'Payment declined', subtitle: 'Please retry', toneClass: 'declined', showRetry: true };
   if (status === 'error') return { title: 'Terminal unavailable', subtitle: 'Please retry', toneClass: 'error', showRetry: true };
-  return { title: 'Ready for card', subtitle: 'Tap / Insert / Swipe', toneClass: 'ready', showRetry: false };
+  return { title: 'Ready for card', subtitle: 'Tap / Insert / Swipe / Key In on Terminal', toneClass: 'ready', showRetry: false };
 }
 
 function cardTerminalIcon(): string {
@@ -24,6 +24,85 @@ function cardTerminalIcon(): string {
     <path d="M50 24c4 2 6 6 6 10"></path>
     <path d="M48 30c2 1 3 3 3 4"></path>
   </svg>`;
+}
+
+function cardBrandFromPan(panDigits: string): CardBrand {
+  const digits = String(panDigits || '').replace(/\D/g, '');
+  if (!digits) return 'unknown';
+  if (digits.startsWith('4')) return 'visa';
+  if (/^5[1-5]/.test(digits) || /^2(2[2-9]|[3-6]|7[0-1]|720)/.test(digits)) return 'mastercard';
+  if (/^3[47]/.test(digits)) return 'amex';
+  if (/^6(?:011|5)/.test(digits)) return 'discover';
+  return 'unknown';
+}
+
+function manualPanDisplay(digits: string): string {
+  const clean = String(digits || '').replace(/\D/g, '').slice(0, 19);
+  if (!clean) return '____ ____ ____ ____';
+  return clean.replace(/(.{4})/g, '$1 ').trim();
+}
+
+function manualExpiryDisplay(digits: string): string {
+  const clean = String(digits || '').replace(/\D/g, '').slice(0, 4);
+  const mm = clean.slice(0, 2).padEnd(2, '_');
+  const yy = clean.slice(2, 4).padEnd(2, '_');
+  return `${mm}/${yy}`;
+}
+
+function manualCvvDisplay(digits: string): string {
+  const clean = String(digits || '').replace(/\D/g, '').slice(0, 4);
+  if (!clean) return '___';
+  return '\u2022'.repeat(clean.length);
+}
+
+function manualEntryStatusHtml(state: PaymentPaneState): string {
+  const brand = cardBrandFromPan(state.manualCardDigits || '');
+  const brandText = cardBrandLabel(brand);
+  return `
+    <div class="lilpay-soft-terminal-status" aria-live="polite">
+      <div class="lilpay-soft-terminal-status-title">${state.cardStatus === 'declined' ? 'Entry check failed' : 'Manual entry ready'}</div>
+      <div class="lilpay-soft-terminal-status-detail">${state.cardStatus === 'declined' ? 'Check PAN, exp, and CVV, then press Enter.' : `Brand detected: ${brandText}`}</div>
+    </div>
+  `;
+}
+
+function manualEntryTerminalHtml(state: PaymentPaneState): string {
+  const activeField = state.manualCardEntryField || 'pan';
+  return `
+    <div class="lilpay-soft-terminal" aria-label="Soft card terminal for manual entry">
+      <div class="lilpay-soft-terminal-screen" role="group" aria-label="Manual card data entry screen">
+        <button type="button" class="lilpay-soft-screen-row ${activeField === 'pan' ? 'active' : ''}" data-lilpay-manual-field="pan" aria-pressed="${activeField === 'pan' ? 'true' : 'false'}">
+          <span>PAN</span>
+          <b>${manualPanDisplay(state.manualCardDigits || '')}</b>
+        </button>
+        <button type="button" class="lilpay-soft-screen-row ${activeField === 'exp' ? 'active' : ''}" data-lilpay-manual-field="exp" aria-pressed="${activeField === 'exp' ? 'true' : 'false'}">
+          <span>EXP</span>
+          <b>${manualExpiryDisplay(state.manualCardExpiryDigits || '')}</b>
+        </button>
+        <button type="button" class="lilpay-soft-screen-row ${activeField === 'cvv' ? 'active' : ''}" data-lilpay-manual-field="cvv" aria-pressed="${activeField === 'cvv' ? 'true' : 'false'}">
+          <span>CVV</span>
+          <b>${manualCvvDisplay(state.manualCardCvvDigits || '')}</b>
+        </button>
+      </div>
+
+      <div class="lilpay-soft-terminal-keypad" role="group" aria-label="Manual card terminal keypad">
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="1">1</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="2">2</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="3">3</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="4">4</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="5">5</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="6">6</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="7">7</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="8">8</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="9">9</button>
+        <button type="button" class="lilpay-soft-key lilpay-soft-key-clear" data-lilpay-manual-key="clear" aria-label="Clear entry">✕</button>
+        <button type="button" class="lilpay-soft-key" data-lilpay-manual-key="0">0</button>
+        <button type="button" class="lilpay-soft-key lilpay-soft-key-back" data-lilpay-manual-key="backspace" aria-label="Backspace">⌫</button>
+        <button type="button" class="lilpay-soft-key lilpay-soft-key-enter" data-lilpay-manual-key="enter" aria-label="Confirm entry">⦿</button>
+      </div>
+      ${manualEntryStatusHtml(state)}
+    </div>
+  `;
 }
 
 function cardBrandLabel(brand: CardBrand): string {
@@ -142,7 +221,11 @@ function cardTipControlsHtml(state: PaymentPaneState): string {
     <section class="lilpay-card-tip-panel lilpay-card-tip-panel-compact" aria-label="Card tip controls">
       <div class="lilpay-card-tip-amount-inline" aria-live="polite">Tip ${formatCents(tipAmountCents)}</div>
       <div class="lilpay-card-tip-grid" role="group" aria-label="Tip percentage presets">
-        <button type="button" class="lilpay-sub-action" data-lilpay-card-tip-inc-percent="1">+1%</button>
+        <div class="lilpay-tip-jogger" role="group" aria-label="1 percent tip jogger">
+          <button type="button" class="lilpay-tip-jogger-btn" data-lilpay-card-tip-dec-percent="1" aria-label="Decrease tip by 1 percent">−</button>
+          <span class="lilpay-tip-jogger-value">1%</span>
+          <button type="button" class="lilpay-tip-jogger-btn" data-lilpay-card-tip-inc-percent="1" aria-label="Increase tip by 1 percent">+</button>
+        </div>
         <button type="button" class="lilpay-sub-action ${cardTipSelectionClass(state, 'percent-10')}" data-lilpay-card-tip-percent="10">10%</button>
         <button type="button" class="lilpay-sub-action ${cardTipSelectionClass(state, 'percent-15')}" data-lilpay-card-tip-percent="15">15%</button>
         <button type="button" class="lilpay-sub-action ${cardTipSelectionClass(state, 'percent-20')}" data-lilpay-card-tip-percent="20">20%</button>
@@ -150,7 +233,11 @@ function cardTipControlsHtml(state: PaymentPaneState): string {
       </div>
 
       <div class="lilpay-card-tip-grid" role="group" aria-label="Tip fixed amount presets">
-        <button type="button" class="lilpay-sub-action" data-lilpay-card-tip-inc-fixed="100">+$1</button>
+        <div class="lilpay-tip-jogger" role="group" aria-label="1 dollar tip jogger">
+          <button type="button" class="lilpay-tip-jogger-btn" data-lilpay-card-tip-dec-fixed="100" aria-label="Decrease tip by 1 dollar">−</button>
+          <span class="lilpay-tip-jogger-value">$1</span>
+          <button type="button" class="lilpay-tip-jogger-btn" data-lilpay-card-tip-inc-fixed="100" aria-label="Increase tip by 1 dollar">+</button>
+        </div>
         <button type="button" class="lilpay-sub-action ${cardTipSelectionClass(state, 'fixed-5')}" data-lilpay-card-tip-fixed="500">$5</button>
         <button type="button" class="lilpay-sub-action ${cardTipSelectionClass(state, 'fixed-10')}" data-lilpay-card-tip-fixed="1000">$10</button>
         <button type="button" class="lilpay-sub-action ${cardTipSelectionClass(state, 'fixed-20')}" data-lilpay-card-tip-fixed="2000">$20</button>
@@ -191,6 +278,8 @@ function cardPaymentPaneHtml(input: PaymentPaneInput, state: PaymentPaneState): 
   const removingCard = activeCards.find((c) => c.savedPaymentMethodId === state.removingCardId) || null;
   const canRemove = input.canRemoveSavedCards !== false;
   const terminalCopy = cardStatusCopy(state.cardStatus);
+  const useManual = !selectedCard && state.cardEntryMode === 'manual';
+  const manualModeButtonLabel = useManual ? 'Use Physical Terminal' : 'Manual Entry';
 
   return `
     <section class="lilpay-center-card lilpay-card-pane" aria-label="Card payment controls">
@@ -202,14 +291,17 @@ function cardPaymentPaneHtml(input: PaymentPaneInput, state: PaymentPaneState): 
             ? cofSelectedCardStatusHtml(selectedCard, state)
             : `<div class="lilpay-cof-new-card-section${activeCards.length > 0 ? ' with-cof' : ''}">
                 ${activeCards.length > 0 ? '<h3 class="lilpay-cof-new-card-title">Use New Card</h3>' : ''}
-                <div class="lilpay-card-status ${terminalCopy.toneClass}">
-                  <div class="lilpay-terminal-wrap">${cardTerminalIcon()}</div>
-                  <div>
-                    <div class="lilpay-card-title">${terminalCopy.title}</div>
-                    <div class="lilpay-card-subtitle">${terminalCopy.subtitle}</div>
-                    ${terminalCopy.showRetry ? '<button type="button" class="lilpay-sub-action" data-lilpay-card-retry="1">Retry</button>' : ''}
-                  </div>
-                </div>
+                ${useManual
+                  ? manualEntryTerminalHtml(state)
+                  : `<div class="lilpay-card-status ${terminalCopy.toneClass}">
+                      <div class="lilpay-terminal-wrap">${cardTerminalIcon()}</div>
+                      <div>
+                        <div class="lilpay-card-title">${terminalCopy.title}</div>
+                        <div class="lilpay-card-subtitle">${terminalCopy.subtitle}</div>
+                        ${terminalCopy.showRetry ? '<button type="button" class="lilpay-sub-action" data-lilpay-card-retry="1">Retry</button>' : ''}
+                      </div>
+                    </div>`
+                }
               </div>`
           }
         </div>
@@ -220,7 +312,7 @@ function cardPaymentPaneHtml(input: PaymentPaneInput, state: PaymentPaneState): 
       <div class="lilpay-card-secondary-actions lilpay-card-secondary-actions-consolidated">
         ${selectedCard
           ? '<button type="button" class="lilpay-sub-action" data-lilpay-cof-select="" title="Use the physical card terminal instead">Use New Card Instead</button>'
-          : '<button type="button" class="lilpay-sub-action" data-lilpay-manual-entry="1">Manual Entry</button>'
+          : `<button type="button" class="lilpay-sub-action" data-lilpay-manual-entry="1">${manualModeButtonLabel}</button>`
         }
       </div>
     </section>
