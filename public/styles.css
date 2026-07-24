@@ -2077,7 +2077,7 @@ button:disabled {
 
 .customer-entry-actions button {
   padding: 5px 8px;
-  min-height: 24px;
+  min-height: 48px;
   font-size: 12px;
   line-height: 1.1;
   font-weight: 700;
@@ -5273,4 +5273,3 @@ button:disabled {
   overflow: auto;
   margin: 0;
 }
-
