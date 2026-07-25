@@ -38,8 +38,7 @@ function cashPaymentPaneHtml(state: PaymentPaneState): string {
           <div class="lilpay-divider"></div>
           <h3>Change Due</h3>
           <div class="lilpay-change-due">${formatCents(state.changeDueCents)}</div>
-          <p class="lilpay-muted-note">Cash drawer will open when you complete the sale.</p>
-          ${insufficient ? `<p class="lilpay-error-note">Cash received must cover the selected payment amount.</p>` : ''}
+          ${insufficient ? `<p class="lilpay-error-note lilpay-cash-insufficient-note">Cash received must cover the selected payment amount.</p>` : ''}
         </div>
       </div>
     </section>

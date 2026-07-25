@@ -7,7 +7,7 @@
   --panel: #ffffff;
   --ink: #1e293b;
   --muted: #64748b;
-  --line: #d4d4d8;
+  --line: #c4c4ca;
   --accent: #c2410c;
   --accent-2: #ea580c;
   --ok: #15803d;
@@ -113,7 +113,7 @@ button:disabled {
 
 .lilpay-main {
   background: var(--panel);
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 16px;
   padding: 14px;
   display: flex;
@@ -145,7 +145,7 @@ button:disabled {
   width: 42px;
   height: 42px;
   border-radius: 10px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   background: #fff;
   color: #0f2357;
   font-size: 23px;
@@ -156,7 +156,7 @@ button:disabled {
 }
 
 .lilpay-balance-card {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 14px;
   padding: 14px;
   background: #fff;
@@ -210,7 +210,7 @@ button:disabled {
 }
 
 .lilpay-method-tab {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   background: #fff;
   color: #0f2357;
   min-height: 52px;
@@ -226,7 +226,7 @@ button:disabled {
 }
 
 .lilpay-center-card {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 14px;
   background: #fff;
   padding: 14px;
@@ -247,7 +247,7 @@ button:disabled {
 }
 
 .lilpay-amount-display {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   min-height: 64px;
   display: flex;
@@ -267,7 +267,7 @@ button:disabled {
 
 .lilpay-keypad button {
   min-height: 44px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
@@ -283,7 +283,7 @@ button:disabled {
 
 .lilpay-keypad-split button {
   min-height: 44px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
@@ -305,7 +305,7 @@ button:disabled {
 
 .lilpay-quick-row button {
   min-height: 52px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
@@ -362,6 +362,10 @@ button:disabled {
   font-weight: 800;
 }
 
+.lilpay-cash-insufficient-note {
+  font-size: 14px;
+}
+
 .lilpay-card-status {
   display: grid;
   grid-template-columns: 130px minmax(0, 1fr);
@@ -372,7 +376,7 @@ button:disabled {
 .lilpay-terminal-wrap {
   width: 120px;
   height: 120px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 999px;
   display: grid;
   place-items: center;
@@ -541,13 +545,13 @@ button:disabled {
 
 .lilpay-card-secondary-actions-consolidated {
   grid-template-columns: minmax(240px, 1fr);
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid #d2dbe6;
   padding-top: 10px;
 }
 
 .lilpay-sub-action {
   min-height: 44px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: #fff;
   color: #0f2357;
@@ -563,7 +567,7 @@ button:disabled {
 
 .lilpay-card-tip-panel {
   margin-top: 12px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid #d2dbe6;
   padding-top: 12px;
   display: grid;
   gap: 10px;
@@ -597,7 +601,7 @@ button:disabled {
 }
 
 .lilpay-card-tip-totals {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   padding: 10px;
   background: #f8fafc;
@@ -607,24 +611,24 @@ button:disabled {
 
 .lilpay-card-tip-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.3fr) repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
 .lilpay-card-tip-grid .lilpay-sub-action {
-  min-height: 40px;
-  font-size: 22px;
+  min-height: 38px;
+  font-size: 20px;
   font-weight: 900;
-  padding: 8px 6px;
+  padding: 7px 6px;
 }
 
 .lilpay-tip-jogger {
   min-height: 40px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: #fff;
   display: grid;
-  grid-template-columns: 44px 1fr 44px;
+  grid-template-columns: 54px 1fr 54px;
   align-items: center;
 }
 
@@ -655,7 +659,7 @@ button:disabled {
 }
 
 .lilpay-card-tip-editor {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: #fff;
   padding: 12px;
@@ -707,7 +711,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 2px solid #dbe4ef;
+  border: 2px solid #cbd5e1;
   border-radius: 12px;
   padding: 10px 12px;
   cursor: pointer;
@@ -736,7 +740,7 @@ button:disabled {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  border: 2px solid #dbe4ef;
+  border: 2px solid #cbd5e1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -780,7 +784,7 @@ button:disabled {
 .lilpay-cof-remove-btn {
   width: 32px;
   height: 32px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #d2dbe6;
   border-radius: 50%;
   background: transparent;
   color: #94a3b8;
@@ -818,7 +822,7 @@ button:disabled {
   width: 100%;
   max-width: 420px;
   background: #fff;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 16px;
   padding: 24px;
 }
@@ -894,7 +898,7 @@ button:disabled {
 .lilpay-text-link-status {
   border-radius: 12px;
   padding: 14px 16px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   background: #f8fafc;
 }
 
@@ -939,7 +943,7 @@ button:disabled {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
-  border: 1px solid #cbd9eb;
+  border: 1px solid #b9c9df;
   background: #eef5fd;
   color: #172033;
   border-radius: 12px;
@@ -980,7 +984,7 @@ button:disabled {
 
 .lilpay-text-link-input {
   min-height: 56px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   padding: 0 16px;
   font-size: 28px;
@@ -1018,7 +1022,7 @@ button:disabled {
 }
 
 .lilpay-split-header > div {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   background: #f8fafc;
   padding: 8px 10px;
@@ -1071,7 +1075,7 @@ button:disabled {
 .lilpay-split-even-adjust,
 .lilpay-split-even-value {
   height: 54px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: #fff;
   color: #0f2a62;
@@ -1113,7 +1117,7 @@ button:disabled {
 }
 
 .lilpay-split-portion {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   background: #f8fafc;
   padding: 8px;
@@ -1184,7 +1188,7 @@ button:disabled {
   gap: 8px;
   min-height: 42px;
   padding: 7px 11px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
@@ -1307,7 +1311,7 @@ button.lilpay-split-method-choice:focus-visible {
   height: 40px;
   min-height: 40px;
   padding: 0;
-  border: 2px solid #cbd5e1;
+  border: 2px solid #b8c5d6;
   border-radius: 50%;
   background: #fff;
   color: #64748b;
@@ -1337,7 +1341,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .lilpay-side-card {
   background: var(--panel);
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 14px;
   padding: 12px;
 }
@@ -1364,7 +1368,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .lilpay-remaining-box {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   padding: 8px;
   display: flex;
@@ -1394,8 +1398,8 @@ button.lilpay-split-method-choice:focus-visible {
 
 .lilpay-items-scroll {
   margin-top: 6px;
-  border-top: 1px solid #e2e8f0;
-  border-bottom: 1px solid #e2e8f0;
+  border-top: 1px solid #d2dbe6;
+  border-bottom: 1px solid #d2dbe6;
   padding: 8px 0;
   max-height: 120px;
   overflow: auto;
@@ -1437,7 +1441,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .lilpay-action-btn {
   min-height: 42px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 10px;
   background: #fff;
   color: #0f2357;
@@ -1555,7 +1559,7 @@ button.lilpay-split-method-choice:focus-visible {
 .dev-tools {
   background: var(--panel);
   border-radius: 16px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08);
 }
 
@@ -1571,7 +1575,7 @@ button.lilpay-split-method-choice:focus-visible {
   display: grid;
   gap: 8px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #d2dbe6;
 }
 
 .rail-list {
@@ -1589,7 +1593,7 @@ button.lilpay-split-method-choice:focus-visible {
   font-weight: 600;
   background: var(--surface);
   color: #1f2937;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
 }
 
 .cat-btn.active {
@@ -1625,7 +1629,7 @@ button.lilpay-split-method-choice:focus-visible {
   display: flex;
   align-items: center;
   min-height: 52px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: 999px;
   background: #fff;
   padding: 6px 56px 6px 14px;
@@ -1669,7 +1673,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .order-special-clear-btn:disabled {
   opacity: 0.45;
-  border-color: #d4d4d8;
+  border-color: #c4c4ca;
   background: #f1f5f9;
   color: #64748b;
 }
@@ -1698,7 +1702,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .incoming-panel {
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: 12px;
   padding: 10px;
   background: #f8fafc;
@@ -1815,7 +1819,7 @@ button.lilpay-split-method-choice:focus-visible {
 .pos-item {
   background: #fff;
   color: #0f172a;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   min-height: 108px;
   width: 100%;
   height: 100%;
@@ -1839,7 +1843,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .pos-item.out-of-stock {
   background: #f1f5f9;
-  border-color: #cbd5e1;
+  border-color: #b8c5d6;
   color: #475569;
 }
 
@@ -1892,7 +1896,7 @@ button.lilpay-split-method-choice:focus-visible {
   width: 40px;
   height: 40px;
   font-size: 21px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
@@ -2049,7 +2053,7 @@ button.lilpay-split-method-choice:focus-visible {
   border-radius: 11px;
   background: #e2e8f0;
   color: #0f172a;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.4px;
@@ -2204,7 +2208,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .customer-summary,
 .customer-entry {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: #f8fafc;
   padding: 10px;
@@ -2226,7 +2230,7 @@ button.lilpay-split-method-choice:focus-visible {
   padding: 0;
   background: #e2e8f0;
   color: #334155;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   font-size: 13px;
   line-height: 1;
 }
@@ -2291,7 +2295,7 @@ button.lilpay-split-method-choice:focus-visible {
   margin-top: 8px;
   margin-bottom: 8px;
   background: #f8fafc;
-  border-color: #cbd5e1;
+  border-color: #b8c5d6;
 }
 
 .previous-order-customer.empty-summary {
@@ -2337,7 +2341,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .entry-grid input {
-  border: 1px solid #d4d4d8;
+  border: 1px solid #c4c4ca;
   border-radius: 9px;
   padding: 10px;
   width: 100%;
@@ -2362,7 +2366,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .entry-field textarea {
-  border: 1px solid #d4d4d8;
+  border: 1px solid #c4c4ca;
   border-radius: 9px;
   padding: 8px;
   width: 100%;
@@ -2426,7 +2430,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .customer-mgmt-results {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: #f8fafc;
   padding: 10px;
@@ -2439,7 +2443,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .customer-result-tile {
   text-align: left;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   background: #fff;
   color: #1e293b;
   border-radius: 10px;
@@ -2496,7 +2500,7 @@ button.lilpay-split-method-choice:focus-visible {
   display: inline-flex;
   align-items: center;
   padding: 3px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: 999px;
   background: #f8fafc;
   gap: 2px;
@@ -2528,7 +2532,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .order-mgmt-tile {
   text-align: left;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   background: #fff;
   color: #0f172a;
   border-radius: 12px;
@@ -2556,7 +2560,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .orders-mgmt-board-column {
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   background: #f8fafc;
   display: grid;
@@ -2570,7 +2574,7 @@ button.lilpay-split-method-choice:focus-visible {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #d2dbe6;
 }
 
 .orders-mgmt-board-column-head h4 {
@@ -2616,7 +2620,7 @@ button.lilpay-split-method-choice:focus-visible {
   gap: 8px;
   width: 100%;
   min-height: 46px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
   background: #fff;
   color: #0f172a;
@@ -2788,7 +2792,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .order-detail-pane {
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: 12px;
   background: #f8fafc;
   margin-bottom: 10px;
@@ -2844,7 +2848,7 @@ button.lilpay-split-method-choice:focus-visible {
   height: 36px;
   border-radius: 999px;
   padding: 0;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   background: #f8fafc;
   color: #334155;
   display: inline-flex;
@@ -2871,7 +2875,7 @@ button.lilpay-split-method-choice:focus-visible {
   font-size: 12px;
   color: #334155;
   background: #f1f5f9;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: 999px;
   padding: 4px 10px;
 }
@@ -2888,7 +2892,7 @@ button.lilpay-split-method-choice:focus-visible {
 .order-audit-trail {
   margin-top: 8px;
   margin-bottom: 8px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #d2dbe6;
   border-radius: 10px;
   background: #f8fafc;
   padding: 8px;
@@ -2912,7 +2916,7 @@ button.lilpay-split-method-choice:focus-visible {
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   background: #f8fafc;
   color: #334155;
   font-size: 14px;
@@ -2964,7 +2968,7 @@ button.lilpay-split-method-choice:focus-visible {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  border-bottom: 1px dashed #e2e8f0;
+  border-bottom: 1px dashed #d2dbe6;
   padding: 6px 0;
 }
 
@@ -3018,7 +3022,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .line-item {
   padding: 8px 0;
-  border-bottom: 1px dashed #e2e8f0;
+  border-bottom: 1px dashed #d2dbe6;
 }
 
 .line-main b {
@@ -3177,13 +3181,13 @@ button.lilpay-split-method-choice:focus-visible {
   margin-top: 10px;
   background: transparent;
   padding-top: 12px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid #d2dbe6;
 }
 
 .ticket-footer.previous-order-footer {
   margin-top: auto;
   padding-top: 12px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid #d2dbe6;
 }
 
 .btn-pay-now,
@@ -3262,7 +3266,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .dev-controls select {
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: 10px;
   padding: 10px;
   background: #f8fafc;
@@ -3276,7 +3280,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .metric {
   background: #f8fafc;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
   border-radius: 12px;
   padding: 10px;
 }
@@ -3298,7 +3302,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .dev-call-sim {
   margin-top: 10px;
-  border: 1px dashed #cbd5e1;
+  border: 1px dashed #b8c5d6;
   border-radius: 12px;
   padding: 10px;
   background: #fff;
@@ -3334,7 +3338,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .empty {
-  border: 1px dashed #cbd5e1;
+  border: 1px dashed #b8c5d6;
   border-radius: 12px;
   padding: 18px;
   text-align: center;
@@ -3373,7 +3377,7 @@ button.lilpay-split-method-choice:focus-visible {
   justify-content: space-between;
   gap: 16px;
   padding: 12px 14px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #d2dbe6;
 }
 
 .modal-header-title {
@@ -3413,7 +3417,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .modal-action-btn {
-  border: 1px solid #cbd9eb;
+  border: 1px solid #b9c9df;
   background: #eef5fd;
   color: #172033;
   border-radius: 12px;
@@ -3459,7 +3463,7 @@ button.lilpay-split-method-choice:focus-visible {
   font-size: 20px;
   padding: 0;
   border-radius: 12px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -3548,7 +3552,7 @@ button.lilpay-split-method-choice:focus-visible {
   letter-spacing: calc(2px * var(--receipt-scale));
   color: #0f172a;
   background: #f1f5f9;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: calc(12px * var(--receipt-scale));
   padding: calc(10px * var(--receipt-scale));
 }
@@ -3597,7 +3601,7 @@ button.lilpay-split-method-choice:focus-visible {
 .chip {
   background: #f1f5f9;
   color: #0f172a;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
 }
 
 .chip.active {
@@ -3607,7 +3611,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .modal footer {
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid #d2dbe6;
   padding: 12px;
   display: flex;
   justify-content: space-between;
@@ -3624,7 +3628,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .pizza-summary-bar {
   padding: 10px 12px;
-  border-bottom: 1px solid #dbe4ef;
+  border-bottom: 1px solid #cbd5e1;
   background: #fbfdff;
   display: flex;
   align-items: center;
@@ -3661,7 +3665,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .pizza-nav {
-  border-right: 1px solid #e2e8f0;
+  border-right: 1px solid #d2dbe6;
   background: #f8fbff;
   padding: 12px;
   overflow: auto;
@@ -3698,14 +3702,14 @@ button.lilpay-split-method-choice:focus-visible {
 
 .pizza-nav-btn.active {
   background: #fff;
-  border-color: #cbd9eb;
+  border-color: #b9c9df;
   box-shadow: 0 4px 12px rgba(20, 38, 70, 0.08);
 }
 
 .pizza-prep-panel {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid #dbe4ef;
+  border-top: 1px solid #cbd5e1;
 }
 
 .pizza-prep-title {
@@ -3724,7 +3728,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .pizza-prep-btn {
-  border: 1px solid #cbd9eb;
+  border: 1px solid #b9c9df;
   background: #eef5fd;
   color: #172033;
   border-radius: 9px;
@@ -3766,7 +3770,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .pizza-filter-tab {
-  border: 1px solid #cbd9eb;
+  border: 1px solid #b9c9df;
   background: #eef5fd;
   color: #172033;
   border-radius: 999px;
@@ -3869,7 +3873,7 @@ button.lilpay-split-method-choice:focus-visible {
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid #cbd9eb;
+  border: 1px solid #b9c9df;
   background: #eef5fd;
   border-radius: 14px;
   padding: 6px 8px;
@@ -3951,7 +3955,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .pizza-side-btn {
-  border: 1px solid #cbd9eb;
+  border: 1px solid #b9c9df;
   background: #fff;
   border-radius: 9px;
   height: 34px;
@@ -4014,7 +4018,7 @@ button.lilpay-split-method-choice:focus-visible {
   width: 100%;
   min-height: 140px;
   resize: vertical;
-  border: 1px solid #cbd9eb;
+  border: 1px solid #b9c9df;
   border-radius: 14px;
   padding: 14px;
   font-size: 15px;
@@ -4399,7 +4403,7 @@ button.lilpay-split-method-choice:focus-visible {
   background: #fff;
   border-radius: 14px;
   padding: 14px;
-  border: 1px solid #dbe4ef;
+  border: 1px solid #cbd5e1;
 }
 
 .manager-modal {
@@ -4472,7 +4476,7 @@ button.lilpay-split-method-choice:focus-visible {
 
 .editor-input {
   width: 100%;
-  border: 1px solid #d4d4d8;
+  border: 1px solid #c4c4ca;
   border-radius: 10px;
   padding: 10px;
   margin-top: 8px;
@@ -4588,7 +4592,7 @@ button.lilpay-split-method-choice:focus-visible {
   min-height: 54px;
   padding: 0 14px;
   overflow: hidden;
-  border: 1px solid #d4d4d8;
+  border: 1px solid #c4c4ca;
   border-radius: 15px;
   background: #fff;
   color: #0f172a;
@@ -4648,7 +4652,7 @@ button.lilpay-split-method-choice:focus-visible {
   min-height: 44px;
   justify-self: center;
   padding: 0;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #b8c5d6;
   border-radius: 7px;
   background: #f8fafc;
   color: #334155;
@@ -4736,7 +4740,7 @@ button.lilpay-split-method-choice:focus-visible {
   gap: 6px;
   max-height: 160px;
   overflow: auto;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #d2dbe6;
   border-radius: 10px;
   padding: 8px;
 }
@@ -5024,7 +5028,7 @@ button.lilpay-split-method-choice:focus-visible {
 
   .pizza-nav {
     border-right: 0;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid #d2dbe6;
     display: flex;
     gap: 8px;
     padding: 10px;

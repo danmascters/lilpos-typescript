@@ -164,6 +164,9 @@ describe('payment pane render', () => {
     expect(html).toContain('data-lilpay-quick="exact"');
     expect(html).toContain('Exact Change $27.05');
     expect(html).toContain('Complete Cash Sale');
+    expect(html).toContain('lilpay-cash-insufficient-note');
+    expect(html).toContain('Cash received must cover the selected payment amount.');
+    expect(html).not.toContain('Cash drawer will open when you complete the sale.');
   });
 
   it('renders split payment portions with an emphasized inline amount', () => {
