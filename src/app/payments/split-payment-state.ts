@@ -27,6 +27,7 @@ function splitBuildPortion(input: {
     id: splitCreatePortionId(sequence),
     sequence,
     paymentMethod: input.paymentMethod || splitDefaultPortionMethod(),
+    finalPaymentMethodLabel: '',
     plannedAmountCents,
     approvedAmountCents: 0,
     tipAmountCents: 0,
@@ -110,7 +111,7 @@ function splitSetMode(workspace: SplitPaymentWorkspace, mode: SplitPaymentMode):
 function splitSetRequestedCount(workspace: SplitPaymentWorkspace, count: number): SplitPaymentWorkspace {
   return splitRecomputeWorkspace({
     ...workspace,
-    requestedPaymentCount: Math.max(2, Math.min(12, Math.round(Number(count || 2))))
+    requestedPaymentCount: Math.max(2, Math.min(50, Math.round(Number(count || 2))))
   });
 }
 
@@ -215,6 +216,8 @@ function splitMarkPortionApproved(workspace: SplitPaymentWorkspace, input: {
   providerTransactionReference?: string;
   cardBrand?: string;
   cardLast4?: string;
+  paymentMethod?: SplitPortionPaymentMethod;
+  finalPaymentMethodLabel?: string;
 }): SplitPaymentWorkspace {
   const approvedAmountCents = window.LilposSplitPaymentMath.splitClampCents(input.approvedAmountCents);
   const tipAmountCents = window.LilposSplitPaymentMath.splitClampCents(input.tipAmountCents || 0);
@@ -233,6 +236,8 @@ function splitMarkPortionApproved(workspace: SplitPaymentWorkspace, input: {
         providerTransactionReference: input.providerTransactionReference || portion.providerTransactionReference,
         cardBrand: input.cardBrand || portion.cardBrand,
         cardLast4: input.cardLast4 || portion.cardLast4,
+        paymentMethod: input.paymentMethod || portion.paymentMethod,
+        finalPaymentMethodLabel: String(input.finalPaymentMethodLabel || portion.finalPaymentMethodLabel || ''),
         failureCode: '',
         failureMessage: '',
         updatedAt: new Date().toISOString()

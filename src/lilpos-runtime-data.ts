@@ -1414,6 +1414,7 @@
         record.orderId = orderId;
         record.sequence = Number(portion && portion.sequence || 0);
         record.paymentMethod = String(portion && portion.paymentMethod || 'other');
+        record.finalPaymentMethodLabel = String(portion && portion.finalPaymentMethodLabel || '');
         record.plannedAmountCents = Number(portion && portion.plannedAmountCents || 0);
         record.approvedAmountCents = Number(portion && portion.approvedAmountCents || 0);
         record.tipAmountCents = Number(portion && portion.tipAmountCents || 0);
@@ -1480,6 +1481,7 @@
             orderId: workspace.orderId,
             sequence: portion.sequence,
             paymentMethod: portion.paymentMethod,
+            finalPaymentMethodLabel: portion.finalPaymentMethodLabel,
             plannedAmountCents: portion.plannedAmountCents,
             approvedAmountCents: portion.approvedAmountCents,
             tipAmountCents: portion.tipAmountCents,

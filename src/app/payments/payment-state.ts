@@ -41,6 +41,7 @@ function createStateFromInput(input: PaymentPaneInput): PaymentPaneState {
     splitWorkspace,
     splitProcessingPortionId: null,
     splitProcessingAmountCents: 0,
+    splitProcessingPreviousPortion: null,
     isSubmitting: false,
     errorMessage: ''
   };
@@ -510,6 +511,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       splitWorkspace: window.LilposSplitPaymentState.splitGenerateEvenPortions(state.splitWorkspace, action.method),
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
+      splitProcessingPreviousPortion: null,
       errorMessage: ''
     };
   }
@@ -533,6 +535,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       }),
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
+      splitProcessingPreviousPortion: null,
       errorMessage: ''
     };
   }
@@ -578,6 +581,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       splitWorkspace: window.LilposSplitPaymentState.splitRemovePendingPortion(state.splitWorkspace, action.portionId),
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
+      splitProcessingPreviousPortion: null,
       errorMessage: ''
     };
   }
@@ -591,6 +595,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       splitWorkspace: window.LilposSplitPaymentState.splitMarkPortionProcessing(state.splitWorkspace, action.portionId),
       splitProcessingPortionId: action.portionId,
       splitProcessingAmountCents: portion ? Number(portion.plannedAmountCents || 0) : 0,
+      splitProcessingPreviousPortion: portion ? { ...portion } : null,
       cardTipFixedCents: restoredTipCents,
       cardTipPercentBasisPoints: 0,
       cardTipSelection: restoredTipCents > 0 ? 'custom' : 'no-tip',
@@ -610,7 +615,9 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       provider: action.provider,
       providerTransactionReference: action.providerTransactionReference,
       cardBrand: action.cardBrand,
-      cardLast4: action.cardLast4
+      cardLast4: action.cardLast4,
+      paymentMethod: action.paymentMethod,
+      finalPaymentMethodLabel: action.finalPaymentMethodLabel
     });
     const nextApplied = window.LilposSplitPaymentMath
       ? window.LilposSplitPaymentMath.splitPaidSoFarCents(nextWorkspace.portions)
@@ -621,6 +628,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       paymentsAppliedCents: nextApplied,
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
+      splitProcessingPreviousPortion: null,
       errorMessage: ''
     }));
   }
@@ -636,6 +644,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       }),
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
+      splitProcessingPreviousPortion: null,
       errorMessage: ''
     };
   }
@@ -647,6 +656,7 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       splitWorkspace: window.LilposSplitPaymentState.splitCancelWorkspace(state.splitWorkspace),
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
+      splitProcessingPreviousPortion: null,
       errorMessage: ''
     };
   }
@@ -656,7 +666,32 @@ function reducer(state: PaymentPaneState, action: PaymentPaneAction): PaymentPan
       ...state,
       splitProcessingPortionId: null,
       splitProcessingAmountCents: 0,
+      splitProcessingPreviousPortion: null,
       isSubmitting: false
+    });
+  }
+
+  if (action.type === 'split-return-to-workspace') {
+    const previousPortion = state.splitProcessingPreviousPortion;
+    const processingId = state.splitProcessingPortionId;
+    const restoredWorkspace = state.splitWorkspace && previousPortion && processingId
+      ? window.LilposSplitPaymentState.splitRecomputeWorkspace({
+          ...state.splitWorkspace,
+          selectedPortionId: processingId,
+          portions: state.splitWorkspace.portions.map((portion) => (
+            portion.id === processingId ? { ...previousPortion } : portion
+          ))
+        })
+      : state.splitWorkspace;
+    return withRecomputedCardTip({
+      ...state,
+      selectedPaymentMethod: 'split',
+      splitWorkspace: restoredWorkspace,
+      splitProcessingPortionId: null,
+      splitProcessingAmountCents: 0,
+      splitProcessingPreviousPortion: null,
+      isSubmitting: false,
+      errorMessage: ''
     });
   }
 

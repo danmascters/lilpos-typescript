@@ -20,6 +20,7 @@ type SplitPaymentPortionRuntime = {
   id: string;
   sequence: number;
   paymentMethod: SplitPortionPaymentMethod;
+  finalPaymentMethodLabel: string;
   plannedAmountCents: number;
   approvedAmountCents: number;
   tipAmountCents: number;
@@ -148,6 +149,7 @@ type PaymentPaneState = {
   splitWorkspace: SplitPaymentWorkspace | null;
   splitProcessingPortionId: string | null;
   splitProcessingAmountCents: number;
+  splitProcessingPreviousPortion: SplitPaymentPortionRuntime | null;
   isSubmitting: boolean;
   errorMessage: string;
 };
@@ -205,6 +207,8 @@ interface Window {
       providerTransactionReference?: string;
       cardBrand?: string;
       cardLast4?: string;
+      paymentMethod?: SplitPortionPaymentMethod;
+      finalPaymentMethodLabel?: string;
     }) => SplitPaymentWorkspace;
     splitMarkPortionDeclined: (workspace: SplitPaymentWorkspace, input: {
       portionId: string;
@@ -262,9 +266,10 @@ type PaymentPaneAction =
   | { type: 'split-set-portion-amount'; portionId: string; amountCents: number }
   | { type: 'split-remove-portion'; portionId: string }
   | { type: 'split-mark-processing'; portionId: string }
-  | { type: 'split-mark-approved'; portionId: string; approvedAmountCents: number; tipAmountCents?: number; paymentId?: string; provider?: string; providerTransactionReference?: string; cardBrand?: string; cardLast4?: string }
+  | { type: 'split-mark-approved'; portionId: string; approvedAmountCents: number; tipAmountCents?: number; paymentId?: string; provider?: string; providerTransactionReference?: string; cardBrand?: string; cardLast4?: string; paymentMethod?: SplitPortionPaymentMethod; finalPaymentMethodLabel?: string }
   | { type: 'split-mark-declined'; portionId: string; failureCode?: string; failureMessage?: string }
   | { type: 'split-cancel-workspace' }
   | { type: 'split-clear-processing' }
+  | { type: 'split-return-to-workspace' }
   | { type: 'set-error'; message: string }
   | { type: 'reset-error' };

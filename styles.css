@@ -1048,10 +1048,7 @@ button:disabled {
   color: #9a3412;
 }
 
-.lilpay-split-mode-row,
 .lilpay-split-even-row,
-.lilpay-split-method-select,
-.lilpay-split-next-methods,
 .lilpay-split-portion-actions,
 .lilpay-split-decline-actions {
   display: flex;
@@ -1059,23 +1056,52 @@ button:disabled {
   gap: 6px;
 }
 
-.lilpay-split-custom-row {
-  display: grid;
-  gap: 6px;
+.lilpay-split-even-row {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
 }
 
-.lilpay-split-custom-row label {
-  font-size: 14px;
-  color: #334155;
-  font-weight: 700;
+.lilpay-split-even-jogger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-#lilpaySplitAmount {
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 18px;
+.lilpay-split-even-adjust,
+.lilpay-split-even-value {
+  height: 54px;
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  background: #fff;
+  color: #0f2a62;
+  font-size: 28px;
   font-weight: 800;
+  line-height: 1;
+}
+
+.lilpay-split-even-adjust {
+  width: 54px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.lilpay-split-even-adjust:active:not(:disabled) {
+  border-color: #f59e0b;
+  background: #fff7ed;
+}
+
+.lilpay-split-even-adjust:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lilpay-split-even-value {
+  min-width: 82px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
 }
 
 .lilpay-split-plan-list {
@@ -1091,8 +1117,11 @@ button:disabled {
   border-radius: 10px;
   background: #f8fafc;
   padding: 8px;
-  display: grid;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .lilpay-split-portion.selected {
@@ -1100,10 +1129,35 @@ button:disabled {
   background: #fff7ed;
 }
 
+.lilpay-split-portion.status-approved {
+  border-color: #4ade80;
+  background: #dcfce7;
+}
+
+.lilpay-split-portion.status-approved .lilpay-split-portion-amount,
+.lilpay-split-portion.status-approved .lilpay-split-portion-label,
+.lilpay-split-portion.status-approved .lilpay-split-portion-method {
+  color: #166534;
+}
+
+.lilpay-split-portion.status-approved .lilpay-split-portion-seq {
+  background: #bbf7d0;
+  color: #166534;
+}
+
 .lilpay-split-portion-main {
   display: flex;
+  align-items: center;
+  flex: 1 1 auto;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
 }
 
 .lilpay-split-portion-left,
@@ -1111,6 +1165,56 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
+}
+
+.lilpay-split-portion-left {
+  min-width: 0;
+}
+
+.lilpay-split-portion-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lilpay-split-method-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 7px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #0f2357;
+  font: inherit;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+button.lilpay-split-method-choice {
+  cursor: pointer;
+}
+
+button.lilpay-split-method-choice:hover,
+button.lilpay-split-method-choice:focus-visible {
+  border-color: #fb923c;
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.lilpay-split-method-choice.is-locked {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.lilpay-split-portion-amount {
+  color: #0f172a;
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .lilpay-split-portion-seq {
@@ -1127,10 +1231,22 @@ button:disabled {
 }
 
 .lilpay-split-portion-method {
-  width: 18px;
-  text-align: center;
-  font-weight: 900;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: #334155;
+}
+
+.lilpay-split-portion-method svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .lilpay-split-status-pill {
@@ -1177,6 +1293,34 @@ button:disabled {
 
 .lilpay-split-process-btn {
   margin-left: auto;
+}
+
+.lilpay-split-portion-actions {
+  align-items: center;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.lilpay-split-remove-btn {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 2px solid #cbd5e1;
+  border-radius: 50%;
+  background: #fff;
+  color: #64748b;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.lilpay-split-remove-btn:hover,
+.lilpay-split-remove-btn:focus-visible {
+  border-color: #ef4444;
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .lilpay-split-footnote {
@@ -4423,6 +4567,104 @@ button:disabled {
 
 .future-order-modal .schedule-grid label {
   gap: calc(6px * var(--future-order-scale));
+}
+
+.future-order-modal .schedule-field-group {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.future-order-modal .schedule-field-label {
+  color: #334155;
+  font-size: calc(14px * var(--future-order-scale));
+}
+
+.schedule-picker-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 54px;
+  padding: 0 14px;
+  overflow: hidden;
+  border: 1px solid #d4d4d8;
+  border-radius: 15px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.schedule-picker-value {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.schedule-picker-icon .nav-svg {
+  width: 27px;
+  height: 27px;
+  stroke: #0f172a;
+}
+
+.schedule-native-picker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.schedule-jogger-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.schedule-jogger {
+  display: grid;
+  grid-template-rows: auto 44px 44px;
+  gap: 3px;
+  min-width: 0;
+  text-align: center;
+}
+
+.schedule-jogger > span {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.schedule-jogger button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  justify-self: center;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.schedule-jogger button:hover,
+.schedule-jogger button:focus-visible {
+  border-color: #94a3b8;
+  background: #e2e8f0;
+}
+
+.schedule-jogger button:active {
+  background: #cbd5e1;
+  transform: translateY(1px);
 }
 
 .future-order-modal .editor-input {

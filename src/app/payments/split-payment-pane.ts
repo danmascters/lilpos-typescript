@@ -6,31 +6,53 @@ function splitStatusClass(status: SplitPaymentPortionStatus): string {
 }
 
 function splitMethodIcon(method: SplitPortionPaymentMethod): string {
-  if (method === 'cash') return '$';
-  if (method === 'card') return '\u25A3';
-  return '\u25C7';
+  if (method === 'cash') {
+    return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M15 8.5c-.8-.7-1.8-1-3-1-1.7 0-3 .8-3 2s1 1.8 3 2.2 3 1 3 2.3-1.3 2.4-3 2.4c-1.3 0-2.5-.4-3.4-1.2M12 5.5v13"></path></svg>';
+  }
+  if (method === 'card') {
+    return '<svg viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2"></rect><path d="M3 10h18M7 15h4"></path></svg>';
+  }
+  return '<svg viewBox="0 0 24 24"><path d="M12 3.5 20.5 12 12 20.5 3.5 12 12 3.5z"></path><path d="M8.5 12h7M12 8.5v7"></path></svg>';
+}
+
+function splitNextPaymentMethod(method: SplitPortionPaymentMethod): SplitPortionPaymentMethod {
+  if (method === 'cash') return 'card';
+  if (method === 'card') return 'other';
+  return 'cash';
 }
 
 function splitPortionLineHtml(portion: SplitPaymentPortionRuntime, selectedPortionId: string | null): string {
   const selected = portion.id === selectedPortionId;
-  const methodLabel = window.LilposSplitPaymentMath.splitDisplayMethodLabel(portion.paymentMethod);
+  const methodLabel = portion.status === 'APPROVED' && portion.finalPaymentMethodLabel
+    ? portion.finalPaymentMethodLabel
+    : window.LilposSplitPaymentMath.splitDisplayMethodLabel(portion.paymentMethod);
   const amount = formatCents(portion.plannedAmountCents);
   const approvedAmount = formatCents(portion.approvedAmountCents || 0);
   const tipAmount = formatCents(portion.tipAmountCents || 0);
   const canEdit = portion.status === 'PENDING' || portion.status === 'DECLINED';
   const canProcess = canEdit;
+  const statusLabel = portion.status === 'APPROVED' ? 'PAID' : portion.status.replace(/_/g, ' ');
+  const nextMethodLabel = window.LilposSplitPaymentMath.splitDisplayMethodLabel(splitNextPaymentMethod(portion.paymentMethod));
+  const methodControl = canEdit
+    ? `<button type="button" class="lilpay-split-method-choice" data-lilpay-split-cycle-method="${portion.id}" aria-label="Payment type ${methodLabel}. Tap to change to ${nextMethodLabel}">
+        <span class="lilpay-split-portion-method" aria-hidden="true">${splitMethodIcon(portion.paymentMethod)}</span>
+        <span class="lilpay-split-portion-label">${methodLabel}</span>
+      </button>`
+    : `<span class="lilpay-split-method-choice is-locked">
+        <span class="lilpay-split-portion-method" aria-hidden="true">${splitMethodIcon(portion.paymentMethod)}</span>
+        <span class="lilpay-split-portion-label">${methodLabel}</span>
+      </span>`;
 
   return `
     <div class="lilpay-split-portion ${selected ? 'selected' : ''} status-${splitStatusClass(portion.status)}" data-lilpay-split-portion-id="${portion.id}">
       <div class="lilpay-split-portion-main">
         <div class="lilpay-split-portion-left">
           <span class="lilpay-split-portion-seq">${portion.sequence}</span>
-          <span class="lilpay-split-portion-method" aria-hidden="true">${splitMethodIcon(portion.paymentMethod)}</span>
-          <span class="lilpay-split-portion-label">${methodLabel}</span>
+          ${methodControl}
         </div>
         <div class="lilpay-split-portion-right">
-          <b>${amount}</b>
-          <span class="lilpay-split-status-pill ${splitStatusClass(portion.status)}">${portion.status.replace(/_/g, ' ')}</span>
+          <b class="lilpay-split-portion-amount">${amount}</b>
+          <span class="lilpay-split-status-pill ${splitStatusClass(portion.status)}">${statusLabel}</span>
         </div>
       </div>
       ${portion.status === 'APPROVED' ? `
@@ -43,34 +65,32 @@ function splitPortionLineHtml(portion: SplitPaymentPortionRuntime, selectedPorti
       ${portion.failureMessage ? `<div class="lilpay-split-failure">${portion.failureMessage}</div>` : ''}
       ${canEdit ? `
         <div class="lilpay-split-portion-actions">
-          <button type="button" class="lilpay-sub-action" data-lilpay-split-select="${portion.id}">Select</button>
-          <button type="button" class="lilpay-sub-action" data-lilpay-split-remove="${portion.id}">Remove</button>
           <button type="button" class="lilpay-action-btn lilpay-split-process-btn" data-lilpay-split-process="${portion.id}" ${canProcess ? '' : 'disabled'}>Process</button>
+          <button type="button" class="lilpay-split-remove-btn" data-lilpay-split-remove="${portion.id}" aria-label="Remove payment portion ${portion.sequence}" title="Remove payment portion">×</button>
         </div>
       ` : ''}
       ${portion.status === 'DECLINED' ? `
         <div class="lilpay-split-decline-actions">
           <button type="button" class="lilpay-sub-action" data-lilpay-split-retry="${portion.id}">Try Again</button>
-          <button type="button" class="lilpay-sub-action" data-lilpay-split-method="${portion.id}:card">Use Another Card</button>
-          <button type="button" class="lilpay-sub-action" data-lilpay-split-method="${portion.id}:cash">Change to Cash</button>
-          <button type="button" class="lilpay-sub-action" data-lilpay-split-select="${portion.id}">Change Amount</button>
         </div>
       ` : ''}
     </div>
   `;
 }
 
-function splitEvenCountButtonsHtml(current: number): string {
-  const options = [2, 3, 4, 5, 6];
-  return options.map((value) => `
-    <button type="button" class="lilpay-sub-action ${current === value ? 'active' : ''}" data-lilpay-split-even-count="${value}">${value}</button>
-  `).join('');
+function splitEvenCountJoggerHtml(current: number): string {
+  const value = Math.max(2, Math.min(50, Math.round(Number(current || 2))));
+  return `
+    <div class="lilpay-split-even-jogger" role="group" aria-label="Number of equal payments">
+      <button type="button" class="lilpay-split-even-adjust" data-lilpay-split-even-adjust="-1" aria-label="Remove one split payment row" ${value <= 2 ? 'disabled' : ''}>−</button>
+      <output class="lilpay-split-even-value" data-lilpay-split-even-value="${value}" aria-live="polite" aria-label="${value} equal payments">${value}</output>
+      <button type="button" class="lilpay-split-even-adjust" data-lilpay-split-even-adjust="1" aria-label="Add one split payment row" ${value >= 50 ? 'disabled' : ''}>+</button>
+    </div>
+  `;
 }
 
 function splitPaymentPaneHtml(input: PaymentPaneInput, state: PaymentPaneState): string {
   const workspace = state.splitWorkspace || window.LilposSplitPaymentState.createSplitWorkspace(input);
-  const selectedPortion = workspace.portions.find((portion) => portion.id === workspace.selectedPortionId) || null;
-  const selectedAmount = selectedPortion ? selectedPortion.plannedAmountCents : workspace.remainingCents;
 
   return `
     <section class="lilpay-center-card lilpay-split-pane" aria-label="Split payment workspace">
@@ -80,40 +100,14 @@ function splitPaymentPaneHtml(input: PaymentPaneInput, state: PaymentPaneState):
         <div class="lilpay-split-remaining"><span>Remaining Balance</span><b>${formatCents(workspace.remainingCents)}</b></div>
       </div>
 
-      <div class="lilpay-split-mode-row" role="group" aria-label="Split mode">
-        <button type="button" class="lilpay-sub-action ${workspace.mode === 'CUSTOM' ? 'active' : ''}" data-lilpay-split-mode="CUSTOM">Split by Amount</button>
-        <button type="button" class="lilpay-sub-action ${workspace.mode === 'EVEN' ? 'active' : ''}" data-lilpay-split-mode="EVEN">Split Evenly</button>
+      <div class="lilpay-split-even-row" role="group" aria-label="Split balance evenly">
+        ${splitEvenCountJoggerHtml(workspace.requestedPaymentCount)}
+        <button type="button" class="lilpay-sub-action ${workspace.mode === 'EVEN' ? 'active' : ''}" data-lilpay-split-mode="EVEN">Split Balance Evenly</button>
       </div>
-
-      ${workspace.mode === 'EVEN' ? `
-        <div class="lilpay-split-even-row">
-          ${splitEvenCountButtonsHtml(workspace.requestedPaymentCount)}
-          <button type="button" class="lilpay-action-btn" data-lilpay-split-generate-even="1">Generate Even Split</button>
-        </div>
-      ` : `
-        <div class="lilpay-split-custom-row">
-          <label for="lilpaySplitAmount">Next Amount</label>
-          <input id="lilpaySplitAmount" type="text" inputmode="decimal" data-keyboard-kind="decimal" value="${formatCents(workspace.amountEditorCents)}" data-lilpay-split-amount="1" />
-          <div class="lilpay-split-method-select">
-            <button type="button" class="lilpay-sub-action" data-lilpay-split-add="cash">Cash</button>
-            <button type="button" class="lilpay-sub-action" data-lilpay-split-add="card">Credit</button>
-            <button type="button" class="lilpay-sub-action" data-lilpay-split-add="other">Other</button>
-          </div>
-        </div>
-      `}
 
       <div class="lilpay-split-plan-list">
         ${workspace.portions.map((portion) => splitPortionLineHtml(portion, workspace.selectedPortionId)).join('')}
       </div>
-
-      ${selectedPortion ? `
-        <div class="lilpay-split-next-methods">
-          <span>Pay ${formatCents(selectedAmount)} with:</span>
-          <button type="button" class="lilpay-sub-action ${selectedPortion.paymentMethod === 'cash' ? 'active' : ''}" data-lilpay-split-method="${selectedPortion.id}:cash">Cash</button>
-          <button type="button" class="lilpay-sub-action ${selectedPortion.paymentMethod === 'card' ? 'active' : ''}" data-lilpay-split-method="${selectedPortion.id}:card">Credit</button>
-          <button type="button" class="lilpay-sub-action ${selectedPortion.paymentMethod === 'other' ? 'active' : ''}" data-lilpay-split-method="${selectedPortion.id}:other">Other</button>
-        </div>
-      ` : ''}
 
       <div class="lilpay-split-footnote">Each approved portion is recorded as its own payment record. Tips on cards are tracked per transaction.</div>
     </section>

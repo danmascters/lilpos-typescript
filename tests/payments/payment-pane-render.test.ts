@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 declare const createStateFromInput: (input: any) => any;
 declare const renderPane: (input: any, state: any) => string;
+declare const splitNextPaymentMethod: (method: 'cash' | 'card' | 'other') => 'cash' | 'card' | 'other';
 
 describe('payment pane render', () => {
   const input = {
@@ -163,5 +164,62 @@ describe('payment pane render', () => {
     expect(html).toContain('data-lilpay-quick="exact"');
     expect(html).toContain('Exact Change $27.05');
     expect(html).toContain('Complete Cash Sale');
+  });
+
+  it('renders split payment portions with an emphasized inline amount', () => {
+    const state = { ...createStateFromInput(input), selectedPaymentMethod: 'split' };
+    const html = renderPane(input, state);
+    expect(html).toContain('lilpay-split-portion-amount');
+    expect(html).toContain('data-lilpay-split-cycle-method');
+    expect(html).toContain('data-lilpay-split-remove');
+    expect(html).toContain('data-lilpay-split-process');
+    expect(html).not.toContain('>Select</button>');
+    expect(html).not.toContain('>Remove</button>');
+    expect(html).toContain('lilpay-split-remove-btn');
+    expect(html).not.toContain('lilpay-split-next-methods');
+    expect(html).toContain('<svg viewBox="0 0 24 24">');
+    expect(html).not.toContain('Next Amount');
+    expect(html).not.toContain('id="lilpaySplitAmount"');
+    expect(html).not.toContain('data-lilpay-split-add');
+  });
+
+  it('always renders the jogger to the left of the split balance button', () => {
+    const baseState = createStateFromInput(input);
+    const state = { ...baseState, selectedPaymentMethod: 'split' };
+    const html = renderPane(input, state);
+    expect(html).toContain('data-lilpay-split-even-adjust="-1"');
+    expect(html).toContain('data-lilpay-split-even-value="2"');
+    expect(html).toContain('data-lilpay-split-even-adjust="1"');
+    expect(html).toContain('Split Balance Evenly');
+    expect(html).not.toContain('Split by Amount');
+    expect(html.indexOf('lilpay-split-even-jogger')).toBeLessThan(html.indexOf('Split Balance Evenly'));
+    expect(html).not.toContain('data-lilpay-split-even-count');
+    expect(html).not.toContain('data-lilpay-split-generate-even');
+    expect(html).not.toContain('Generate Even Split');
+  });
+
+  it('cycles inline split payment methods through every available type', () => {
+    expect(splitNextPaymentMethod('cash')).toBe('card');
+    expect(splitNextPaymentMethod('card')).toBe('other');
+    expect(splitNextPaymentMethod('other')).toBe('cash');
+  });
+
+  it('renders approved split portions as paid without a remove control', () => {
+    const baseState = createStateFromInput(input);
+    const pendingId = baseState.splitWorkspace.portions[0].id;
+    const approvedWorkspace = window.LilposSplitPaymentState.splitMarkPortionApproved(baseState.splitWorkspace, {
+      portionId: pendingId,
+      approvedAmountCents: 2705,
+      paymentId: 'pay_test',
+      paymentMethod: 'card',
+      finalPaymentMethodLabel: 'Credit'
+    });
+    const state = { ...baseState, selectedPaymentMethod: 'split', splitWorkspace: approvedWorkspace };
+    const html = renderPane(input, state);
+    const paidRow = html.slice(html.indexOf('status-approved'), html.indexOf('status-approved') + 1000);
+    expect(paidRow).toContain('>PAID<');
+    expect(paidRow).toContain('>Credit<');
+    expect(paidRow).not.toContain('data-lilpay-split-remove');
+    expect(paidRow).not.toContain('data-lilpay-split-cycle-method');
   });
 });

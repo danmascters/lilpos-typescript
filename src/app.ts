@@ -2584,6 +2584,7 @@ function applyRecoveredSplitWorkspaceToPane(planPayload: any, portionsPayload: a
     id: String(portion.id || ''),
     sequence: Number(portion.sequence || 0),
     paymentMethod: String(portion.paymentMethod || 'other') as SplitPortionPaymentMethod,
+    finalPaymentMethodLabel: String(portion.finalPaymentMethodLabel || ''),
     plannedAmountCents: Number(portion.plannedAmountCents || 0),
     approvedAmountCents: Number(portion.approvedAmountCents || 0),
     tipAmountCents: Number(portion.tipAmountCents || 0),
@@ -2806,7 +2807,9 @@ async function handlePaymentPanePrimaryAction() {
             portionId: splitPortion.id,
             approvedAmountCents: requiredCents,
             tipAmountCents: 0,
-            paymentId: `split_pay_${uid()}`
+            paymentId: `split_pay_${uid()}`,
+            paymentMethod: 'other',
+            finalPaymentMethodLabel: 'Text Link'
           });
           state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'split-clear-processing' });
           state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'select-method', method: 'split' });
@@ -2942,7 +2945,13 @@ async function handlePaymentPanePrimaryAction() {
         provider: isCard ? 'mock-terminal' : '',
         providerTransactionReference: isCard ? `txn_${uid()}` : '',
         cardBrand,
-        cardLast4
+        cardLast4,
+        paymentMethod: paneMethodToSplitPaymentMethod(paneState.selectedPaymentMethod),
+        finalPaymentMethodLabel: isCash
+          ? 'Cash'
+          : isCard
+          ? (paymentType === 'Card on File' ? 'Card on File' : paymentType === 'Manual Card Entry' ? 'Manual Card' : 'Credit')
+          : 'Other'
       });
       state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'split-clear-processing' });
       state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'select-method', method: 'split' });
@@ -3923,6 +3932,84 @@ function openScheduleDialog() {
       time: parts.time
     };
   }
+}
+
+function scheduleDateFromValue(dateValue = state.scheduleDialog.date) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateValue || ''));
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0);
+  if (
+    date.getFullYear() !== Number(match[1])
+    || date.getMonth() !== Number(match[2]) - 1
+    || date.getDate() !== Number(match[3])
+  ) return null;
+  return date;
+}
+
+function scheduleTimeParts(timeValue = state.scheduleDialog.time) {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(timeValue || ''));
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return { hour, minute };
+}
+
+function scheduleDateDisplayLabel(dateValue = state.scheduleDialog.date) {
+  const date = scheduleDateFromValue(dateValue);
+  if (!date) return 'Choose date';
+  const pad = (value) => String(value).padStart(2, '0');
+  const weekday = date.toLocaleDateString([], { weekday: 'short' }).toUpperCase();
+  return `${weekday}-${pad(date.getMonth() + 1)}/${pad(date.getDate())}/${pad(date.getFullYear() % 100)}`;
+}
+
+function scheduleTimeDisplayLabel(timeValue = state.scheduleDialog.time) {
+  const parts = scheduleTimeParts(timeValue);
+  if (!parts) return 'Choose time';
+  const suffix = parts.hour >= 12 ? 'PM' : 'AM';
+  const hour12 = parts.hour % 12 || 12;
+  return `${String(hour12).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')} ${suffix}`;
+}
+
+function setScheduleDateFromDate(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  state.scheduleDialog.date = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function shiftScheduleDatePart(part, delta) {
+  const date = scheduleDateFromValue() || scheduleDateFromValue(nowLocalParts().date);
+  if (!date) return;
+  const amount = Number(delta || 0);
+
+  if (part === 'day') {
+    date.setDate(date.getDate() + amount);
+  } else if (part === 'month') {
+    const originalDay = date.getDate();
+    const targetMonthIndex = date.getFullYear() * 12 + date.getMonth() + amount;
+    const targetYear = Math.floor(targetMonthIndex / 12);
+    const targetMonth = ((targetMonthIndex % 12) + 12) % 12;
+    const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+    date.setFullYear(targetYear, targetMonth, Math.min(originalDay, lastDay));
+  } else if (part === 'year') {
+    const originalDay = date.getDate();
+    const targetYear = date.getFullYear() + amount;
+    const lastDay = new Date(targetYear, date.getMonth() + 1, 0).getDate();
+    date.setFullYear(targetYear, date.getMonth(), Math.min(originalDay, lastDay));
+  }
+
+  setScheduleDateFromDate(date);
+}
+
+function shiftScheduleTimePart(part, delta) {
+  const parts = scheduleTimeParts() || scheduleTimeParts(nowLocalParts().time);
+  if (!parts) return;
+  let totalMinutes = parts.hour * 60 + parts.minute;
+  const amount = Number(delta || 0);
+  if (part === 'hour') totalMinutes += amount * 60;
+  if (part === 'minute') totalMinutes += amount;
+  if (part === 'period') totalMinutes += amount * 12 * 60;
+  totalMinutes = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+  state.scheduleDialog.time = `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
 }
 
 function openAsapAdjustDialog() {
@@ -8178,20 +8265,48 @@ function scheduleDialogHtml() {
         <h3>Future Order</h3>
         <p>Choose when this order should be ready/requested.</p>
         <div class="schedule-grid">
-          <label>
-            Date
-            <input id="scheduleDate" class="editor-input" type="date" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.scheduleDialog.date)}" />
-          </label>
-          <label>
-            Time
-            <input id="scheduleTime" class="editor-input" type="time" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.scheduleDialog.time)}" />
-          </label>
+          <div class="schedule-field-group">
+            <span class="schedule-field-label">Date</span>
+            <div class="schedule-picker-shell">
+              <span class="schedule-picker-value">${h(scheduleDateDisplayLabel())}</span>
+              <span class="schedule-picker-icon" aria-hidden="true">${navIcon('calendar')}</span>
+              <input id="scheduleDate" class="schedule-native-picker" aria-label="Future order date" type="date" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.scheduleDialog.date)}" />
+            </div>
+            <div class="schedule-jogger-grid schedule-date-joggers" aria-label="Adjust future order date">
+              ${scheduleJoggerHtml('date', 'month', 'Month')}
+              ${scheduleJoggerHtml('date', 'day', 'Day')}
+              ${scheduleJoggerHtml('date', 'year', 'Year')}
+            </div>
+          </div>
+          <div class="schedule-field-group">
+            <span class="schedule-field-label">Time</span>
+            <div class="schedule-picker-shell">
+              <span class="schedule-picker-value">${h(scheduleTimeDisplayLabel())}</span>
+              <span class="schedule-picker-icon" aria-hidden="true">${navIcon('clock')}</span>
+              <input id="scheduleTime" class="schedule-native-picker" aria-label="Future order time" type="time" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.scheduleDialog.time)}" />
+            </div>
+            <div class="schedule-jogger-grid schedule-time-joggers" aria-label="Adjust future order time">
+              ${scheduleJoggerHtml('time', 'hour', 'Hour')}
+              ${scheduleJoggerHtml('time', 'minute', 'Minute')}
+              ${scheduleJoggerHtml('time', 'period', 'AM/PM')}
+            </div>
+          </div>
         </div>
         <div class="call-modal-actions">
           <button id="saveSchedule" class="btn-success">Save</button>
           <button id="cancelSchedule" class="btn-secondary">Cancel</button>
         </div>
       </div>
+    </div>
+  `;
+}
+
+function scheduleJoggerHtml(kind, part, label) {
+  return `
+    <div class="schedule-jogger">
+      <span>${h(label)}</span>
+      <button type="button" data-schedule-${kind}-part="${h(part)}" data-schedule-delta="1" aria-label="Increase ${h(label)}">▲</button>
+      <button type="button" data-schedule-${kind}-part="${h(part)}" data-schedule-delta="-1" aria-label="Decrease ${h(label)}">▼</button>
     </div>
   `;
 }
@@ -9618,8 +9733,28 @@ function attachEvents() {
   $('#scheduleDate')?.addEventListener('input', (e) => {
     state.scheduleDialog.date = e.target.value;
   });
+  $('#scheduleDate')?.addEventListener('change', (e) => {
+    state.scheduleDialog.date = e.target.value;
+    render();
+  });
   $('#scheduleTime')?.addEventListener('input', (e) => {
     state.scheduleDialog.time = e.target.value;
+  });
+  $('#scheduleTime')?.addEventListener('change', (e) => {
+    state.scheduleDialog.time = e.target.value;
+    render();
+  });
+  document.querySelectorAll('[data-schedule-date-part]').forEach((button) => {
+    button.addEventListener('click', () => {
+      shiftScheduleDatePart(button.dataset.scheduleDatePart, button.dataset.scheduleDelta);
+      render();
+    });
+  });
+  document.querySelectorAll('[data-schedule-time-part]').forEach((button) => {
+    button.addEventListener('click', () => {
+      shiftScheduleTimePart(button.dataset.scheduleTimePart, button.dataset.scheduleDelta);
+      render();
+    });
   });
   $('#saveSchedule')?.addEventListener('click', () => {
     saveScheduledOrder();
@@ -9922,59 +10057,40 @@ function attachEvents() {
     btn.addEventListener('click', async () => {
       if (!state.paymentPaneState) return;
       const mode = String((btn as HTMLElement).dataset.lilpaySplitMode || 'CUSTOM').toUpperCase() === 'EVEN' ? 'EVEN' : 'CUSTOM';
+      const wasEven = state.paymentPaneState.splitWorkspace?.mode === 'EVEN';
+      const initialEvenMethod = state.paymentPaneState.splitWorkspace?.portions.find((portion) => portion.status === 'PENDING' || portion.status === 'DECLINED')?.paymentMethod || 'card';
       state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
         type: 'split-set-mode',
         mode
       });
+      if (mode === 'EVEN' && !wasEven) {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+          type: 'split-generate-even',
+          method: initialEvenMethod
+        });
+      }
       await persistSplitWorkspaceFromPaneState();
       render();
     });
   });
 
-  document.querySelectorAll('[data-lilpay-split-even-count]').forEach((btn) => {
+  document.querySelectorAll('[data-lilpay-split-even-adjust]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!state.paymentPaneState) return;
-      const count = Number((btn as HTMLElement).dataset.lilpaySplitEvenCount || 2);
+      const workspace = state.paymentPaneState.splitWorkspace;
+      if (!workspace) return;
+      const delta = Number((btn as HTMLElement).dataset.lilpaySplitEvenAdjust || 0);
+      const currentCount = Number(workspace.requestedPaymentCount || 2);
+      const count = Math.max(2, Math.min(50, currentCount + delta));
+      if (!delta || count === currentCount) return;
+      const existingMethod = workspace.portions.find((portion) => portion.status === 'PENDING' || portion.status === 'DECLINED')?.paymentMethod || 'card';
       state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
         type: 'split-set-even-count',
         count
       });
-      await persistSplitWorkspaceFromPaneState();
-      render();
-    });
-  });
-
-  $('[data-lilpay-split-generate-even="1"]')?.addEventListener('click', async () => {
-    if (!state.paymentPaneState) return;
-    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
-      type: 'split-generate-even',
-      method: 'card'
-    });
-    await persistSplitWorkspaceFromPaneState();
-    render();
-  });
-
-  const splitAmountInput = $('#lilpaySplitAmount') as HTMLInputElement | null;
-  splitAmountInput?.addEventListener('input', async () => {
-    if (!state.paymentPaneState) return;
-    const cents = window.LilposPaymentPane.parseMoneyInputToCents(splitAmountInput.value || '0');
-    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
-      type: 'split-set-amount-editor',
-      cents
-    });
-    await persistSplitWorkspaceFromPaneState();
-    render();
-  });
-
-  document.querySelectorAll('[data-lilpay-split-add]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!state.paymentPaneState?.splitWorkspace) return;
-      const rawMethod = String((btn as HTMLElement).dataset.lilpaySplitAdd || 'cash');
-      const method: SplitPortionPaymentMethod = rawMethod === 'card' ? 'card' : rawMethod === 'other' ? 'other' : 'cash';
       state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
-        type: 'split-add-portion',
-        method,
-        amountCents: state.paymentPaneState.splitWorkspace.amountEditorCents
+        type: 'split-generate-even',
+        method: existingMethod
       });
       await persistSplitWorkspaceFromPaneState();
       render();
@@ -10015,6 +10131,31 @@ function attachEvents() {
       const [portionId, methodRaw] = raw.split(':');
       if (!portionId) return;
       const method: SplitPortionPaymentMethod = methodRaw === 'card' ? 'card' : methodRaw === 'other' ? 'other' : 'cash';
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-set-portion-method',
+        portionId,
+        method
+      });
+      await persistSplitWorkspaceFromPaneState();
+      render();
+    });
+  });
+
+  document.querySelectorAll('[data-lilpay-split-cycle-method]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!state.paymentPaneState?.splitWorkspace) return;
+      const portionId = String((btn as HTMLElement).dataset.lilpaySplitCycleMethod || '');
+      const portion = state.paymentPaneState.splitWorkspace.portions.find((entry) => entry.id === portionId);
+      if (!portion || (portion.status !== 'PENDING' && portion.status !== 'DECLINED')) return;
+      const method: SplitPortionPaymentMethod = portion.paymentMethod === 'cash'
+        ? 'card'
+        : portion.paymentMethod === 'card'
+        ? 'other'
+        : 'cash';
+      state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+        type: 'split-select-portion',
+        portionId
+      });
       state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
         type: 'split-set-portion-method',
         portionId,
@@ -10278,7 +10419,15 @@ function attachEvents() {
   });
 
   document.querySelectorAll('[data-lilpay-back="1"]').forEach((b) => {
-    b.addEventListener('click', () => {
+    b.addEventListener('click', async () => {
+      if (state.paymentPaneState?.splitWorkspace && state.paymentPaneState.splitProcessingPortionId) {
+        state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, {
+          type: 'split-return-to-workspace'
+        });
+        await persistSplitWorkspaceFromPaneState();
+        render();
+        return;
+      }
       closePaymentPaneToSource();
       render();
     });

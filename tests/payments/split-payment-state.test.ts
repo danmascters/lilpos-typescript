@@ -45,6 +45,28 @@ describe('split payment state', () => {
     expect(pendingTotal).toBe(7750);
   });
 
+  it('regenerates the pending row count whenever the even count changes', () => {
+    let ws = state().createSplitWorkspace(baseInput());
+    ws = state().splitSetRequestedCount(ws, 5);
+    ws = state().splitGenerateEvenPortions(ws, 'cash');
+    expect(ws.portions.filter((portion: any) => portion.status === 'PENDING')).toHaveLength(5);
+
+    ws = state().splitSetRequestedCount(ws, 2);
+    ws = state().splitGenerateEvenPortions(ws, 'cash');
+    expect(ws.portions.filter((portion: any) => portion.status === 'PENDING')).toHaveLength(2);
+    expect(ws.portions.reduce((sum: number, portion: any) => sum + portion.plannedAmountCents, 0)).toBe(7750);
+  });
+
+  it('limits the even split jogger to between 2 and 50 rows', () => {
+    let ws = state().createSplitWorkspace(baseInput());
+    expect(state().splitSetRequestedCount(ws, 1).requestedPaymentCount).toBe(2);
+    ws = state().splitSetRequestedCount(ws, 51);
+    expect(ws.requestedPaymentCount).toBe(50);
+    ws = state().splitGenerateEvenPortions(ws, 'card');
+    expect(ws.portions.filter((portion: any) => portion.status === 'PENDING')).toHaveLength(50);
+    expect(ws.portions.reduce((sum: number, portion: any) => sum + portion.plannedAmountCents, 0)).toBe(7750);
+  });
+
   it('declined cards do not reduce balance and approved portions remain approved', () => {
     let ws = state().createSplitWorkspace(baseInput());
     const firstId = ws.portions[0].id;

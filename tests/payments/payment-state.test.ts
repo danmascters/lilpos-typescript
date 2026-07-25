@@ -283,4 +283,44 @@ describe('payment state', () => {
     expect(declined.tipAmountCents).toBe(0);
     expect(state.splitWorkspace.paidCents).toBe(2000);
   });
+
+  it('returns from a split tender to the exact split workspace state', () => {
+    let state = createStateFromInput(input);
+    const portionBeforeTender = { ...state.splitWorkspace.portions[0] };
+
+    state = reducer(state, { type: 'select-method', method: 'split' });
+    state = reducer(state, { type: 'split-mark-processing', portionId: portionBeforeTender.id });
+    state = reducer(state, { type: 'select-method', method: 'cash' });
+    state = reducer(state, { type: 'cash-set-amount', cents: 5000 });
+
+    expect(state.splitWorkspace.portions[0].status).toBe('PROCESSING');
+    expect(state.splitProcessingPortionId).toBe(portionBeforeTender.id);
+
+    state = reducer(state, { type: 'split-return-to-workspace' });
+
+    expect(state.selectedPaymentMethod).toBe('split');
+    expect(state.splitWorkspace.portions[0]).toEqual(portionBeforeTender);
+    expect(state.splitProcessingPortionId).toBeNull();
+    expect(state.splitProcessingAmountCents).toBe(0);
+    expect(state.splitProcessingPreviousPortion).toBeNull();
+  });
+
+  it('locks an approved split row to the final tender method used', () => {
+    let state = createStateFromInput(input);
+    const portionId = state.splitWorkspace.portions[0].id;
+    state = reducer(state, { type: 'split-mark-processing', portionId });
+    state = reducer(state, { type: 'select-method', method: 'card' });
+    state = reducer(state, {
+      type: 'split-mark-approved',
+      portionId,
+      approvedAmountCents: 2705,
+      paymentId: 'pay_final_method',
+      paymentMethod: 'card',
+      finalPaymentMethodLabel: 'Credit'
+    });
+
+    const approved = state.splitWorkspace.portions.find((portion: any) => portion.id === portionId);
+    expect(approved.paymentMethod).toBe('card');
+    expect(approved.finalPaymentMethodLabel).toBe('Credit');
+  });
 });
