@@ -219,6 +219,11 @@ button:disabled {
   font-size: 18px;
 }
 
+.lilpay-method-tab[data-lilpay-method="cash"],
+.lilpay-method-tab[data-lilpay-method="card"] {
+  font-size: 31.5px;
+}
+
 .lilpay-method-tab.active {
   background: #ffedd5;
   border-color: #fdba74;
@@ -1643,7 +1648,7 @@ button.lilpay-split-method-choice:focus-visible {
   outline: none;
   font-family: "Courier New", Consolas, monospace;
   font-weight: 800;
-  font-size: 18px;
+  font-size: 24.3px;
   color: #b91c1c;
 }
 
@@ -3715,7 +3720,7 @@ button.lilpay-split-method-choice:focus-visible {
 .pizza-prep-title {
   display: block;
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: 13.8px;
   font-weight: 900;
   color: #475569;
   letter-spacing: 0.04em;
@@ -3728,12 +3733,14 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .pizza-prep-btn {
+  width: 100%;
+  height: 40px;
   border: 1px solid #b9c9df;
   background: #eef5fd;
   color: #172033;
   border-radius: 9px;
-  padding: 7px 8px;
-  font-size: 12px;
+  padding: 8px 10px;
+  font-size: 13.8px;
   font-weight: 900;
   letter-spacing: 0.02em;
 }
@@ -3748,7 +3755,7 @@ button.lilpay-split-method-choice:focus-visible {
   display: block;
   margin-top: 8px;
   color: #64748b;
-  font-size: 11px;
+  font-size: 12.65px;
   font-weight: 700;
 }
 
@@ -5759,3 +5766,30 @@ button.lilpay-split-method-choice:focus-visible {
   overflow: auto;
   margin: 0;
 }
+
+.delivery-manager { display: grid; gap: 14px; }
+.delivery-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.delivery-tabs button { min-height: 46px; border: 1px solid #b8c5d6; background: #fff; color: #0f2357; font-weight: 800; }
+.delivery-tabs button.active { background: #ffedd5; border-color: #fb923c; color: #9a3412; }
+.delivery-card { display: grid; gap: 12px; padding: 16px; border: 1px solid #b8c5d6; border-radius: 14px; background: #fff; }
+.delivery-card h3 { margin: 0; color: #0f2357; }
+.delivery-card input, .delivery-card select { min-height: 44px; padding: 8px 10px; border: 1px solid #b8c5d6; border-radius: 9px; background: #fff; }
+.delivery-card fieldset { display: grid; gap: 8px; border: 1px solid #b8c5d6; border-radius: 10px; }
+.delivery-card fieldset:disabled { opacity: .5; }
+.delivery-toggle { display: flex; align-items: center; gap: 9px; font-weight: 800; }
+.delivery-two-col, .delivery-settlement-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.delivery-driver-row, .delivery-order-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #d2dbe6; }
+.delivery-driver-row > div:first-child, .delivery-order-row > div:first-child { display: grid; gap: 4px; }
+.delivery-driver-row small, .delivery-order-row small { color: #64748b; }
+.delivery-driver-row > div:last-child, .delivery-order-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.delivery-status-badge { display: inline-flex; width: fit-content; padding: 3px 8px; border: 1px solid #93c5fd; border-radius: 999px; background: #eff6ff; color: #1e3a8a; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.delivery-status-badge.status-delivered { border-color: #86efac; background: #dcfce7; color: #166534; }
+.delivery-status-badge.status-returned, .delivery-status-badge.status-canceled { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+.order-delivery-summary { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-weight: 700; }
+.delivery-settlement-lines { display: grid; gap: 6px; padding: 10px; border-radius: 10px; background: #f8fafc; }
+.delivery-settlement-lines span { display: flex; justify-content: space-between; }
+.delivery-driver-metrics { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0 12px; }
+.delivery-driver-metrics span { background: #f2f5f9; border: 1px solid #c3cdd9; border-radius: 9px; padding: 7px 10px; }
+.delivery-warning, .delivery-error { padding: 10px; border: 1px solid #fca5a5; border-radius: 9px; background: #fef2f2; color: #991b1b; font-weight: 700; }
+.delivery-message { padding: 10px; border: 1px solid #86efac; border-radius: 9px; background: #f0fdf4; color: #166534; font-weight: 700; }
+@media (max-width: 1000px) { .delivery-two-col, .delivery-settlement-grid { grid-template-columns: 1fr; } .delivery-order-row { align-items: flex-start; flex-direction: column; } }

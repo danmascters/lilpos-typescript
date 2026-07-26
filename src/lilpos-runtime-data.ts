@@ -86,7 +86,7 @@
     var getFallbackCustomers = safeDeps.getFallbackCustomers || function() { return []; };
     var nowIso = safeDeps.nowIso || function() { return new Date().toISOString(); };
     var dbName = safeDeps.dbName || 'BringdatSmartRegisterMockNoNpm';
-    var dbVersion = Number.isFinite(Number(safeDeps.dbVersion)) ? Number(safeDeps.dbVersion) : 3;
+    var dbVersion = Number.isFinite(Number(safeDeps.dbVersion)) ? Number(safeDeps.dbVersion) : 4;
     var legacyOrdersKey = safeDeps.legacyOrdersKey || 'lilpos_persisted_orders';
     var getStationNumber = safeDeps.getStationNumber || function() { return 1; };
     var getMerchantId = safeDeps.getMerchantId || function() { return 'local-merchant'; };
@@ -100,6 +100,11 @@
     var STORE_PAYMENT_HISTORY = 'payment_history';
     var STORE_SPLIT_PAYMENT_PLAN = 'split_payment_plan';
     var STORE_SPLIT_PAYMENT_PORTION = 'split_payment_portion';
+    var STORE_DELIVERY_SETTINGS = 'delivery_settings';
+    var STORE_DELIVERY_DRIVERS = 'delivery_drivers';
+    var STORE_DRIVER_SHIFTS = 'driver_shifts';
+    var STORE_DRIVER_SETTLEMENTS = 'driver_settlements';
+    var STORE_DELIVERY_EVENTS = 'delivery_events';
 
     var LEGACY_IMPORT_META_KEY = 'legacy_order_import_v1';
     var ORDERS_MANAGEMENT_VIEW_PREFS_KEY = 'orders_management_view_preferences_v1';
@@ -128,7 +133,7 @@
     }
 
     function businessDateNow(): string {
-      return new Date().toISOString().split('T')[0];
+      return String(nowIso()).split('T')[0];
     }
 
     function normalizeDisplayOrderNumber(orderNumber: any): string {
@@ -241,6 +246,26 @@
       }
     }
 
+    function ensureDeliveryStores(db: IDBDatabase) {
+      if (!db.objectStoreNames.contains(STORE_DELIVERY_SETTINGS)) db.createObjectStore(STORE_DELIVERY_SETTINGS, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(STORE_DELIVERY_DRIVERS)) {
+        var drivers = db.createObjectStore(STORE_DELIVERY_DRIVERS, { keyPath: 'driverId' });
+        drivers.createIndex('by_active', 'active', { unique: false }); drivers.createIndex('by_updatedAt', 'updatedAt', { unique: false }); drivers.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_DRIVER_SHIFTS)) {
+        var shifts = db.createObjectStore(STORE_DRIVER_SHIFTS, { keyPath: 'driverShiftId' });
+        shifts.createIndex('by_driverId', 'driverId', { unique: false }); shifts.createIndex('by_status', 'status', { unique: false }); shifts.createIndex('by_businessDate', 'businessDate', { unique: false }); shifts.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_DRIVER_SETTLEMENTS)) {
+        var settlements = db.createObjectStore(STORE_DRIVER_SETTLEMENTS, { keyPath: 'settlementId' });
+        settlements.createIndex('by_driverId', 'driverId', { unique: false }); settlements.createIndex('by_driverShiftId', 'driverShiftId', { unique: false }); settlements.createIndex('by_businessDate', 'businessDate', { unique: false }); settlements.createIndex('by_status', 'status', { unique: false }); settlements.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_DELIVERY_EVENTS)) {
+        var events = db.createObjectStore(STORE_DELIVERY_EVENTS, { keyPath: 'deliveryEventId' });
+        events.createIndex('by_orderId', 'orderId', { unique: false }); events.createIndex('by_driverId', 'driverId', { unique: false }); events.createIndex('by_eventType', 'eventType', { unique: false }); events.createIndex('by_createdAt', 'createdAt', { unique: false }); events.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+    }
+
     function openRuntimeDb(): Promise<IDBDatabase> {
       return new Promise(function(resolve, reject) {
         var req = indexedDB.open(dbName, dbVersion);
@@ -325,6 +350,18 @@
               }
             }
           }
+
+          if (oldVersion < 4) {
+            ensureDeliveryStores(db);
+            if (tx && db.objectStoreNames.contains(STORE_ORDER_HISTORY)) {
+              var deliveryOrderHistory = tx.objectStore(STORE_ORDER_HISTORY);
+              if (!deliveryOrderHistory.indexNames.contains('by_deliveryStatus')) deliveryOrderHistory.createIndex('by_deliveryStatus', 'deliveryStatus', { unique: false });
+              if (!deliveryOrderHistory.indexNames.contains('by_assignedDriverId')) deliveryOrderHistory.createIndex('by_assignedDriverId', 'assignedDriverId', { unique: false });
+            }
+            if (tx && tx.objectStore && db.objectStoreNames.contains(STORE_META)) {
+              try { tx.objectStore(STORE_META).put({ id: 'schema_version', value: 4, migratedAt: nowIso() }); } catch (_err) {}
+            }
+          }
         };
         req.onsuccess = function() { resolve(req.result); };
         req.onerror = function() { reject(req.error); };
@@ -405,9 +442,16 @@
 
       var paidAmountCents = Array.isArray(safeOrder.paymentLines)
         ? safeOrder.paymentLines.reduce(function(sum: number, line: any) {
-            return sum + toIntCents((line && line.amount) || 0) + toIntCents((line && line.tipAmount) || 0);
+            return sum + toIntCents((line && line.amount) || 0);
           }, 0)
         : (safeOrder.paid ? toIntCents(safeOrder.total || 0) : 0);
+
+      var legacyTipCents = toIntCents(safeOrder.tipTotal || safeOrder.tip || 0);
+      if (!legacyTipCents && Array.isArray(safeOrder.paymentLines)) {
+        legacyTipCents = safeOrder.paymentLines.reduce(function(sum: number, line: any) {
+          return sum + toIntCents((line && line.tipAmount) || 0);
+        }, 0);
+      }
 
       var totalCents = toIntCents(safeOrder.total || 0);
       var remainingBalanceCents = Math.max(0, totalCents - paidAmountCents);
@@ -430,7 +474,7 @@
         taxCents: toIntCents(safeOrder.tax || 0),
         discountCents: toIntCents(safeOrder.discount || 0),
         feeCents: toIntCents(safeOrder.fee || 0),
-        tipCents: toIntCents(safeOrder.tipTotal || 0),
+        tipCents: legacyTipCents,
         totalCents: totalCents,
         amountPaidCents: paidAmountCents,
         remainingBalanceCents: remainingBalanceCents,
@@ -566,7 +610,9 @@
 
       return paymentLines.map(function(line: any, idx: number) {
         var paymentType = String(line && line.paymentType || line && line.type || 'Other');
-        var amountCents = toIntCents(line && line.amount || 0) + toIntCents(line && line.tipAmount || 0);
+        var baseAmountCents = toIntCents(line && line.amount || 0);
+        var tipAmountCents = toIntCents(line && line.tipAmount || 0);
+        var amountCents = baseAmountCents + tipAmountCents;
         var cardBrand = String(line && (line.cardBrand || line.brand || line.cardType) || '').trim();
         var lastFour = String(line && (line.lastFour || line.last4 || line.cardLastFour) || '').replace(/\D/g, '').slice(-4);
         var paymentId = String(line && line.paymentId || 'legacy_' + orderId + '_' + idx);
@@ -579,6 +625,8 @@
           paymentType: paymentType,
           tenderLabel: String(line && line.tenderLabel || paymentType),
           amountCents: amountCents,
+          baseAmountCents: baseAmountCents,
+          tipAmountCents: tipAmountCents,
           cardBrand: cardBrand,
           cardLastFour: lastFour,
           processorReferenceId: String(line && line.processorReferenceId || line && line.processorRef || ''),
@@ -1005,6 +1053,13 @@
           orderType: String(input && input.orderType || 'pickup'),
           orderStatus: String(input && input.orderStatus || normalizeOrderStatus(input)),
           paymentStatus: String(input && input.paymentStatus || (input && input.paid ? 'paid' : 'unpaid')),
+          deliveryStatus: input && input.deliveryStatus || null,
+          assignedDriverId: input && input.assignedDriverId || null,
+          assignedAt: input && input.assignedAt || null,
+          outForDeliveryAt: input && input.outForDeliveryAt || null,
+          deliveredAt: input && input.deliveredAt || null,
+          returnedAt: input && input.returnedAt || null,
+          deliveryCanceledAt: input && input.deliveryCanceledAt || null,
           storedDisplayName: String(input && input.storedDisplayName || input && input.customerName || 'Guest'),
           storedPhone: normalizePhone(input && input.storedPhone || input && input.customerPhone),
           storedAddressSummary: String(input && input.storedAddressSummary || ''),
@@ -1298,6 +1353,11 @@
         var historyRows = (await listStoreAll(STORE_ORDER_HISTORY)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
         var eventRows = (await listStoreAll(STORE_ORDER_EVENTS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
         var paymentRows = (await listStoreAll(STORE_PAYMENT_HISTORY)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var deliveryDrivers = (await listStoreAll(STORE_DELIVERY_DRIVERS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var deliverySettings = (await listStoreAll(STORE_DELIVERY_SETTINGS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var driverShifts = (await listStoreAll(STORE_DRIVER_SHIFTS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var settlements = (await listStoreAll(STORE_DRIVER_SETTLEMENTS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var deliveryEvents = (await listStoreAll(STORE_DELIVERY_EVENTS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
 
         var envelopes = [] as any[];
         historyRows.forEach(function(row: any) {
@@ -1339,10 +1399,143 @@
             updatedAt: row.updatedAt || row.createdAt
           });
         });
+        [[deliverySettings,'DELIVERY_SETTINGS','id'],[deliveryDrivers,'DELIVERY_DRIVER','driverId'],[driverShifts,'DRIVER_SHIFT','driverShiftId'],[settlements,'DRIVER_SETTLEMENT','settlementId'],[deliveryEvents,'DELIVERY_EVENT','deliveryEventId']].forEach(function(group:any) {
+          group[0].forEach(function(row:any) { envelopes.push({ recordId: row[group[2]], recordType: group[1], merchantId: getMerchantId(), stationId: getStationNumber(), schemaVersion: 4, payload: row, idempotencyKey: row[group[2]], createdAt: row.createdAt, updatedAt: row.updatedAt || row.createdAt }); });
+        });
         envelopes.sort(function(a: any, b: any) {
           return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
         });
         return envelopes.slice(0, Math.max(1, max));
+      },
+
+      getDeliverySettings: async function() {
+        await ensureHistoryPersistenceReady();
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_DELIVERY_SETTINGS, 'readonly');
+        var row = await requestResult(tx.objectStore(STORE_DELIVERY_SETTINGS).get('delivery_manager_settings'));
+        await txDone(tx);
+        return row || null;
+      },
+
+      saveDeliverySettings: async function(input: any) {
+        await ensureHistoryPersistenceReady();
+        var current = await this.getDeliverySettings();
+        var stamp = nowIso();
+        var row = Object.assign({}, current || {}, input || {}, {
+          id: 'delivery_manager_settings',
+          inHouseDeliveryEnabled: input && input.inHouseDeliveryEnabled === true,
+          deliveryQueueMode: input && input.deliveryQueueMode === 'dedicated_delivery_queue' ? 'dedicated_delivery_queue' : 'main_orders',
+          driverBanksEnabled: input && input.driverBanksEnabled === true,
+          driverBankReconciliationMode: input && input.driverBankReconciliationMode === 'per_order' ? 'per_order' : 'end_of_shift',
+          createdAt: current && current.createdAt || stamp, updatedAt: stamp, version: Number(current && current.version || 0) + 1,
+          syncStatus: 'pending', lastSyncAttemptAt: null, syncError: null
+        });
+        var db = await openRuntimeDb(); var tx = db.transaction(STORE_DELIVERY_SETTINGS, 'readwrite'); tx.objectStore(STORE_DELIVERY_SETTINGS).put(row); await txDone(tx); return row;
+      },
+
+      listDeliveryDrivers: async function() {
+        await ensureHistoryPersistenceReady();
+        var rows = await listStoreAll(STORE_DELIVERY_DRIVERS); rows.sort(function(a:any,b:any){ return String(a.displayName).localeCompare(String(b.displayName)); }); return rows;
+      },
+
+      createDeliveryDriver: async function(input: any) {
+        await ensureHistoryPersistenceReady(); var stamp = nowIso();
+        var row = { driverId: String(input && input.driverId || ('driver_' + Date.now() + '_' + Math.random().toString(36).slice(2,8))), displayName: String(input && input.displayName || '').trim(), phone: String(input && input.phone || '').trim(), active: true, createdAt: stamp, updatedAt: stamp, version: 1, syncStatus: 'pending', lastSyncAttemptAt: null, syncError: null };
+        if (!row.displayName) throw new Error('Driver name is required.');
+        var db = await openRuntimeDb(); var tx = db.transaction(STORE_DELIVERY_DRIVERS, 'readwrite'); tx.objectStore(STORE_DELIVERY_DRIVERS).add(row); await txDone(tx);
+        await this.appendDeliveryEvent({ eventType: 'DRIVER_CREATED', driverId: row.driverId, metadata: { displayName: row.displayName } }); return row;
+      },
+
+      updateDeliveryDriver: async function(driverId: string, patch: any) {
+        await ensureHistoryPersistenceReady(); var db = await openRuntimeDb(); var tx = db.transaction(STORE_DELIVERY_DRIVERS, 'readwrite'); var store = tx.objectStore(STORE_DELIVERY_DRIVERS); var row = await requestResult(store.get(driverId));
+        if (!row) { await txDone(tx); throw new Error('Driver not found.'); }
+        Object.assign(row, patch || {}, { driverId: driverId, updatedAt: nowIso(), version: Number(row.version || 0) + 1, syncStatus: 'pending', syncError: null });
+        if (!String(row.displayName || '').trim()) { await txDone(tx); throw new Error('Driver name is required.'); }
+        store.put(row); await txDone(tx); return row;
+      },
+
+      setDeliveryDriverActive: async function(driverId: string, active: boolean) {
+        var row = await this.updateDeliveryDriver(driverId, { active: !!active });
+        await this.appendDeliveryEvent({ eventType: active ? 'DRIVER_ACTIVATED' : 'DRIVER_DEACTIVATED', driverId: driverId }); return row;
+      },
+
+      listDriverShifts: async function(driverId?: string) {
+        await ensureHistoryPersistenceReady(); var rows = driverId ? await listStoreAll(STORE_DRIVER_SHIFTS, 'by_driverId', driverId) : await listStoreAll(STORE_DRIVER_SHIFTS); rows.sort(function(a:any,b:any){ return new Date(b.openedAt || 0).getTime() - new Date(a.openedAt || 0).getTime(); }); return rows;
+      },
+
+      openDriverShift: async function(driverId: string, startingBankAmountCents: number, notes?: string) {
+        var driverRows = await this.listDeliveryDrivers(); var driver = driverRows.find(function(row:any){ return row.driverId === driverId && row.active; }); if (!driver) throw new Error('An active driver is required.');
+        var open = (await this.listDriverShifts(driverId)).find(function(row:any){ return row.status === 'OPEN'; }); if (open) throw new Error('Driver already has an open shift.');
+        var settings = await this.getDeliverySettings() || {}; var stamp = nowIso();
+        var row = { driverShiftId: 'shift_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), driverId: driverId, businessDate: businessDateNow(), status: 'OPEN', openedAt: stamp, closedAt: null, startingBankAmountCents: settings.driverBanksEnabled ? Math.max(0, Math.round(Number(startingBankAmountCents || 0))) : 0, bankEnabledAtShiftStart: settings.driverBanksEnabled === true, reconciliationModeAtShiftStart: settings.driverBankReconciliationMode === 'per_order' ? 'per_order' : 'end_of_shift', notes: String(notes || ''), createdAt: stamp, updatedAt: stamp, version: 1, syncStatus: 'pending', lastSyncAttemptAt: null, syncError: null };
+        var db = await openRuntimeDb(); var tx = db.transaction(STORE_DRIVER_SHIFTS, 'readwrite'); tx.objectStore(STORE_DRIVER_SHIFTS).add(row); await txDone(tx); await this.appendDeliveryEvent({ eventType: 'DRIVER_SHIFT_OPENED', driverId: driverId, driverShiftId: row.driverShiftId }); return row;
+      },
+
+      closeDriverShift: async function(driverShiftId: string) {
+        await ensureHistoryPersistenceReady(); var db = await openRuntimeDb(); var tx = db.transaction(STORE_DRIVER_SHIFTS, 'readwrite'); var store = tx.objectStore(STORE_DRIVER_SHIFTS); var row = await requestResult(store.get(driverShiftId)); if (!row) { await txDone(tx); throw new Error('Driver shift not found.'); }
+        row.status = 'CLOSED'; row.closedAt = nowIso(); row.updatedAt = row.closedAt; row.version = Number(row.version || 0) + 1; row.syncStatus = 'pending'; store.put(row); await txDone(tx); await this.appendDeliveryEvent({ eventType: 'DRIVER_SHIFT_CLOSED', driverId: row.driverId, driverShiftId: driverShiftId }); return row;
+      },
+
+      appendDeliveryEvent: async function(input: any) {
+        await ensureHistoryPersistenceReady(); var stamp = nowIso(); var row = Object.assign({}, input || {}, { deliveryEventId: String(input && input.deliveryEventId || ('delivery_event_' + Date.now() + '_' + Math.random().toString(36).slice(2,8))), orderId: String(input && input.orderId || ''), driverId: String(input && input.driverId || ''), driverShiftId: String(input && input.driverShiftId || ''), settlementId: String(input && input.settlementId || ''), eventType: String(input && input.eventType || 'DELIVERY_UPDATED'), businessDate: String(input && input.businessDate || businessDateNow()), createdAt: String(input && input.createdAt || stamp), updatedAt: stamp, version: 1, syncStatus: 'pending', lastSyncAttemptAt: null, syncError: null });
+        var db = await openRuntimeDb(); var tx = db.transaction(STORE_DELIVERY_EVENTS, 'readwrite'); tx.objectStore(STORE_DELIVERY_EVENTS).add(row); await txDone(tx); return row;
+      },
+
+      listDeliveryOrders: async function(driverId?: string) {
+        await ensureHistoryPersistenceReady(); var rows = (await listStoreAll(STORE_ORDER_HISTORY)).filter(function(row:any){ return String(row.orderType || '').toLowerCase() === 'delivery' && !!row.deliveryStatus && (!driverId || row.assignedDriverId === driverId); });
+        var self = this; return Promise.all(rows.map(async function(row:any){ var payments = await self.listPaymentHistory(row.orderId); return Object.assign({}, row, { id: row.orderId, orderNumber: row.displayOrderNumber, paymentLines: payments }); }));
+      },
+
+      listPendingDeliveryOrders: async function() { return (await this.listDeliveryOrders()).filter(function(row:any){ return row.deliveryStatus === 'PENDING_DELIVERY'; }); },
+      listDriverOrders: async function(driverId: string) { return this.listDeliveryOrders(driverId); },
+      listActiveDriverOrders: async function() { return (await this.listDeliveryOrders()).filter(function(row:any){ return row.deliveryStatus === 'ASSIGNED' || row.deliveryStatus === 'OUT_FOR_DELIVERY'; }); },
+      listDeliveryEvents: async function() { await ensureHistoryPersistenceReady(); var rows = await listStoreAll(STORE_DELIVERY_EVENTS); rows.sort(function(a:any,b:any){ return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(); }); return rows; },
+
+      calculateDriverSettlement: async function(driverId: string, scope?: any) {
+        var orders = await this.listDeliveryOrders(driverId); var settlements = await this.listDriverSettlements(driverId); var settled = new Set(settlements.filter(function(row:any){ return row.status === 'APPROVED'; }).reduce(function(all:any[],row:any){ return all.concat(row.orderIds || []); }, []));
+        var shift = (await this.listDriverShifts(driverId)).find(function(row:any){ return row.status === 'OPEN'; }) || null;
+        var settlementBusinessDate = String(scope && scope.businessDate || shift && shift.businessDate || businessDateNow());
+        orders = orders.filter(function(order:any){ return String(order.businessDate || '') === settlementBusinessDate && !settled.has(String(order.id || order.orderId)) && (!scope || !Array.isArray(scope.orderIds) || scope.orderIds.indexOf(String(order.id || order.orderId)) >= 0); });
+        if (!global.LilposDeliveryCalculations) throw new Error('Delivery settlement calculator is unavailable.');
+        return global.LilposDeliveryCalculations.calculate({ orders: orders, shift: shift });
+      },
+
+      assignDeliveryOrder: async function(orderId: string, driverId: string) {
+        var driver = (await this.listDeliveryDrivers()).find(function(row:any){ return row.driverId === driverId && row.active; }); if (!driver) throw new Error('Select an active driver.');
+        var order = await this.getOrderHistoryByOrderId(orderId); if (!order || String(order.orderType).toLowerCase() !== 'delivery') throw new Error('Delivery order not found.');
+        var currentStatus = String(order.deliveryStatus || 'PENDING_DELIVERY');
+        if (currentStatus === 'DELIVERED' || currentStatus === 'RETURNED' || currentStatus === 'CANCELED') throw new Error('Completed delivery orders cannot be reassigned.');
+        var stamp = nowIso(); var next = await this.updateOrderHistorySnapshot(order.historyId, { deliveryStatus: currentStatus === 'PENDING_DELIVERY' ? 'ASSIGNED' : currentStatus, assignedDriverId: driverId, assignedAt: stamp, updatedAt: stamp, syncStatus: 'pending' });
+        await this.appendDeliveryEvent({ eventType: 'DELIVERY_ASSIGNED', orderId: orderId, driverId: driverId, metadata: { previousDriverId: order.assignedDriverId || null } }); return next;
+      },
+
+      updateDeliveryOrderStatus: async function(orderId: string, nextStatus: string) {
+        var order = await this.getOrderHistoryByOrderId(orderId); if (!order) throw new Error('Delivery order not found.');
+        var current = String(order.deliveryStatus || 'PENDING_DELIVERY'); var allowed:any = { PENDING_DELIVERY:['CANCELED'], ASSIGNED:['OUT_FOR_DELIVERY','RETURNED','CANCELED'], OUT_FOR_DELIVERY:['DELIVERED','RETURNED','CANCELED'], DELIVERED:[], RETURNED:[], CANCELED:[] };
+        if ((allowed[current] || []).indexOf(nextStatus) < 0) throw new Error('That delivery status transition is not allowed.');
+        if ((nextStatus === 'OUT_FOR_DELIVERY' || nextStatus === 'DELIVERED') && !order.assignedDriverId) throw new Error('Assign an active driver first.');
+        var stamp = nowIso(); var patch:any = { deliveryStatus: nextStatus, updatedAt: stamp, syncStatus: 'pending' };
+        if (nextStatus === 'OUT_FOR_DELIVERY') patch.outForDeliveryAt = stamp; if (nextStatus === 'DELIVERED') patch.deliveredAt = stamp; if (nextStatus === 'RETURNED') patch.returnedAt = stamp; if (nextStatus === 'CANCELED') patch.deliveryCanceledAt = stamp;
+        var next = await this.updateOrderHistorySnapshot(order.historyId, patch); await this.appendDeliveryEvent({ eventType: 'DELIVERY_STATUS_CHANGED', orderId: orderId, driverId: order.assignedDriverId || '', metadata: { from: current, to: nextStatus } }); return next;
+      },
+
+      listDriverSettlements: async function(driverId?: string) {
+        await ensureHistoryPersistenceReady(); var rows = driverId ? await listStoreAll(STORE_DRIVER_SETTLEMENTS, 'by_driverId', driverId) : await listStoreAll(STORE_DRIVER_SETTLEMENTS); rows.sort(function(a:any,b:any){ return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(); }); return rows;
+      },
+
+      createDriverSettlementDraft: async function(driverId: string, calculation: any) {
+        if (!calculation || (calculation.warnings || []).length) throw new Error('Unable to calculate settlement for some orders due to missing payment details.');
+        if ((await this.listDriverSettlements(driverId)).some(function(row:any){ return row.status === 'DRAFT'; })) throw new Error('Approve or void the existing settlement draft first.');
+        var settings = await this.getDeliverySettings() || {}; var shift = (await this.listDriverShifts(driverId)).find(function(row:any){ return row.status === 'OPEN'; }) || null; var stamp = nowIso();
+        var row = Object.assign({}, calculation, { settlementId: 'settlement_' + Date.now() + '_' + Math.random().toString(36).slice(2,8), driverId: driverId, driverShiftId: shift && shift.driverShiftId || null, businessDate: String(shift && shift.businessDate || businessDateNow()), reconciliationMode: settings.driverBankReconciliationMode === 'per_order' ? 'per_order' : 'end_of_shift', status: 'DRAFT', approvedByEmployeeId: null, approvedAt: null, notes: '', createdAt: stamp, updatedAt: stamp, version: 1, syncStatus: 'pending', lastSyncAttemptAt: null, syncError: null });
+        var db = await openRuntimeDb(); var tx = db.transaction(STORE_DRIVER_SETTLEMENTS, 'readwrite'); tx.objectStore(STORE_DRIVER_SETTLEMENTS).add(row); await txDone(tx); await this.appendDeliveryEvent({ eventType: 'SETTLEMENT_DRAFT_CREATED', driverId: driverId, driverShiftId: row.driverShiftId || '', settlementId: row.settlementId }); return row;
+      },
+
+      approveDriverSettlement: async function(settlementId: string, employeeId: string) {
+        await ensureHistoryPersistenceReady(); var db = await openRuntimeDb(); var tx = db.transaction(STORE_DRIVER_SETTLEMENTS, 'readwrite'); var store = tx.objectStore(STORE_DRIVER_SETTLEMENTS); var row = await requestResult(store.get(settlementId)); if (!row || row.status !== 'DRAFT') { await txDone(tx); throw new Error('Settlement draft not found.'); }
+        row.status = 'APPROVED'; row.approvedByEmployeeId = String(employeeId || 'manager'); row.approvedAt = nowIso(); row.updatedAt = row.approvedAt; row.version = Number(row.version || 0) + 1; row.syncStatus = 'pending'; store.put(row); await txDone(tx);
+        // V1 intentionally records settlement only. Future cash-drawer payout integration belongs here.
+        await this.appendDeliveryEvent({ eventType: 'SETTLEMENT_APPROVED', driverId: row.driverId, driverShiftId: row.driverShiftId || '', settlementId: settlementId }); return row;
       },
 
       saveSplitPaymentPlan: async function(plan: any) {
@@ -1516,6 +1709,13 @@
             orderType: row.orderType,
             status: row.orderStatus,
             paymentStatus: row.paymentStatus,
+            deliveryStatus: row.deliveryStatus || null,
+            assignedDriverId: row.assignedDriverId || null,
+            assignedAt: row.assignedAt || null,
+            outForDeliveryAt: row.outForDeliveryAt || null,
+            deliveredAt: row.deliveredAt || null,
+            returnedAt: row.returnedAt || null,
+            deliveryCanceledAt: row.deliveryCanceledAt || null,
             paid: row.paymentStatus === 'paid' || row.amountPaidCents >= row.totalCents,
             orderSource: row.sourceSnapshot && row.sourceSnapshot.orderSource || '',
             timingType: row.sourceSnapshot && row.sourceSnapshot.timingType || 'asap',
@@ -1540,6 +1740,8 @@
             customerName: row.storedDisplayName,
             subtotal: fromIntCents(row.subtotalCents),
             tax: fromIntCents(row.taxCents),
+            tip: fromIntCents(row.tipCents),
+            tipCents: Number(row.tipCents || 0),
             total: fromIntCents(row.totalCents),
             createdTimestamp: row.createdAt,
             updatedTimestamp: row.updatedAt,
@@ -1570,6 +1772,13 @@
           orderType: row.orderType,
           status: row.orderStatus,
           paymentStatus: row.paymentStatus,
+          deliveryStatus: row.deliveryStatus || null,
+          assignedDriverId: row.assignedDriverId || null,
+          assignedAt: row.assignedAt || null,
+          outForDeliveryAt: row.outForDeliveryAt || null,
+          deliveredAt: row.deliveredAt || null,
+          returnedAt: row.returnedAt || null,
+          deliveryCanceledAt: row.deliveryCanceledAt || null,
           paid: row.paymentStatus === 'paid' || row.amountPaidCents >= row.totalCents,
           orderSource: row.sourceSnapshot && row.sourceSnapshot.orderSource || '',
           timingType: row.sourceSnapshot && row.sourceSnapshot.timingType || 'asap',
@@ -1594,6 +1803,8 @@
           customerName: row.storedDisplayName,
           subtotal: fromIntCents(row.subtotalCents),
           tax: fromIntCents(row.taxCents),
+          tip: fromIntCents(row.tipCents),
+          tipCents: Number(row.tipCents || 0),
           total: fromIntCents(row.totalCents),
           createdTimestamp: row.createdAt,
           updatedTimestamp: row.updatedAt,
@@ -1601,7 +1812,7 @@
           paymentLines: payments.map(function(payment: any) {
             return {
               paymentType: payment.paymentType,
-              amount: fromIntCents(payment.amountCents),
+              amount: fromIntCents(payment.baseAmountCents),
               baseAmount: fromIntCents(payment.baseAmountCents),
               tipAmount: fromIntCents(payment.tipAmountCents),
               cardBrand: payment.cardBrand,
@@ -1651,7 +1862,7 @@
         return {
           dbName: dbName,
           dbVersion: dbVersion,
-          stores: [STORE_KV, STORE_META, STORE_ORDER_HISTORY, STORE_ORDER_HISTORY_ITEMS, STORE_ORDER_EVENTS, STORE_PAYMENT_HISTORY, STORE_SPLIT_PAYMENT_PLAN, STORE_SPLIT_PAYMENT_PORTION],
+          stores: [STORE_KV, STORE_META, STORE_ORDER_HISTORY, STORE_ORDER_HISTORY_ITEMS, STORE_ORDER_EVENTS, STORE_PAYMENT_HISTORY, STORE_SPLIT_PAYMENT_PLAN, STORE_SPLIT_PAYMENT_PORTION, STORE_DELIVERY_SETTINGS, STORE_DELIVERY_DRIVERS, STORE_DRIVER_SHIFTS, STORE_DRIVER_SETTLEMENTS, STORE_DELIVERY_EVENTS],
           legacyOrdersKey: legacyOrdersKey,
           migrationMetaKey: LEGACY_IMPORT_META_KEY
         };

@@ -239,7 +239,7 @@
     if (columnId === 'dueTime') return '<span class="orders-row-due-time" title="' + h(display.dueTimeLabel) + '">' + h(display.dueTimeLabel) + '</span>';
     if (columnId === 'source') return '<span class="orders-row-source" title="' + h(display.sourceLabel) + '">' + h(display.sourceLabel) + '</span>';
     if (columnId === 'payment') return '<span class="orders-row-payment"><span class="order-payment-badge ' + h(display.paymentBadge.paidClass) + '">' + h(display.paymentBadge.paidText) + '</span></span>';
-    if (columnId === 'status') return '<span class="orders-row-status"><span class="order-status ' + h(statusClass(display.orderStatus)) + '">' + h(displayStatus(display.orderStatus)) + '</span></span>';
+    if (columnId === 'status') return '<span class="orders-row-status"><span class="order-status ' + h(statusClass(display.orderStatus)) + '">' + h(displayStatus(display.orderStatus)) + '</span>' + (order.deliveryStatus ? '<span class="delivery-status-badge status-' + h(statusClass(order.deliveryStatus)) + '">' + h(String(order.deliveryStatus).replace(/_/g, ' ')) + '</span>' : '') + '</span>';
     if (columnId === 'total') return '<span class="orders-row-total">' + h(money(order.total)) + '</span>';
     return '';
   }

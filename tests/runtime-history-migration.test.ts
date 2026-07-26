@@ -314,6 +314,7 @@ describe('Runtime history migration v1 -> v2', () => {
       storedDisplayName: 'Counter Customer',
       subtotalCents: 1000,
       taxCents: 66,
+      tipCents: 200,
       totalCents: 1066,
       amountPaidCents: 1066,
       remainingBalanceCents: 0,
@@ -376,6 +377,10 @@ describe('Runtime history migration v1 -> v2', () => {
     expect(payments[0].tipAmountCents).toBe(200);
     expect(payments[0].amountCents).toBe(1266);
     expect(compat.orderId || compat.id).toBe('order_new_1');
+    expect(compat.tipCents).toBe(200);
+    expect(compat.tip).toBe(2);
+    expect(compat.paymentLines[0].amount).toBe(10.66);
+    expect(compat.paymentLines[0].tipAmount).toBe(2);
     expect(compat.lines.length).toBe(1);
   });
 

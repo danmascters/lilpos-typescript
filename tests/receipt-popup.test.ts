@@ -48,6 +48,7 @@ async function bootApp(): Promise<BootedApp> {
 
   const repoRoot = path.resolve(__dirname, '..');
   runScriptInContext(path.join(repoRoot, 'dist', 'lilpos-runtime-data.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'app/order-ticket-summary.js'), context);
   runScriptInContext(path.join(repoRoot, 'dist', 'app.js'), context);
 
   // Wait for initial render
@@ -73,6 +74,7 @@ describe('receipt popup after payment', () => {
       // If state is not exposed, check via the rendered HTML
       if (appState) {
         expect(appState.orderNumberDialog.totalCents).toBe(0);
+        expect(appState.orderNumberDialog.tipCents).toBe(0);
         expect(appState.orderNumberDialog.changeDueCents).toBe(0);
         expect(appState.orderNumberDialog.source).toBe('new-sale');
       } else {
@@ -154,6 +156,27 @@ describe('receipt popup after payment', () => {
         expect(html).toContain('1-17');
       } else {
         // Functions not globally exposed; skip but don't fail
+        expect(true).toBe(true);
+      }
+    } finally {
+      app.dom.window.close();
+    }
+  });
+
+  it('receipt popup shows a positive tip as its own row', async () => {
+    const app = await bootApp();
+    try {
+      const openFn = (app.window as any).openOrderNumberDialog;
+      const renderFn = (app.window as any).render;
+      if (openFn && renderFn) {
+        openFn('1-18', null, { totalCents: 2353, tipCents: 300, changeDueCents: 0, source: 'new-sale' });
+        renderFn();
+        await wait(30);
+        const tipRow = app.document.querySelector('[data-order-receipt-tip="300"]');
+        expect(tipRow?.textContent).toContain('Tip');
+        expect(tipRow?.textContent).toContain('$3.00');
+        expect(app.document.querySelector('.order-number-dialog')?.textContent).toContain('$23.53');
+      } else {
         expect(true).toBe(true);
       }
     } finally {

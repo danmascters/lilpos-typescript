@@ -4,6 +4,7 @@
   var SECRET_FIELD_PATTERN = /password|secret|token|apiKey|authorization|auth|credential/i;
   var LEGACY_ORDERS_STORAGE_KEY = 'lilpos_persisted_orders';
   var ORDER_DATA_STORE_NAMES = ['order_history', 'payment_history', 'order_events'];
+  var PROTECTED_SYNC_STORE_NAMES = ['delivery_settings', 'delivery_drivers', 'driver_shifts', 'driver_settlements', 'delivery_events'];
 
   var SECTION_GROUPS = [
     {
@@ -46,6 +47,17 @@
         { id: 'orders.completed', label: 'Same-Day Completed Orders', storeName: 'order_history', filter: function(row: any) { return row && row.orderStatus === 'completed'; } },
         { id: 'orders.payments', label: 'Payment Records', storeName: 'payment_history' },
         { id: 'orders.auditEvents', label: 'Order Audit Events', storeName: 'order_events' }
+      ]
+    },
+    {
+      id: 'delivery',
+      label: 'Delivery Manager',
+      sections: [
+        { id: 'delivery.settings', label: 'Delivery Settings', storeName: 'delivery_settings' },
+        { id: 'delivery.drivers', label: 'Delivery Drivers', storeName: 'delivery_drivers' },
+        { id: 'delivery.shifts', label: 'Driver Shifts', storeName: 'driver_shifts' },
+        { id: 'delivery.settlements', label: 'Driver Settlements', storeName: 'driver_settlements' },
+        { id: 'delivery.events', label: 'Delivery Audit Events', storeName: 'delivery_events' }
       ]
     },
     {
@@ -463,6 +475,15 @@
 
       var db = await openDb();
       try {
+        var protectedStores = PROTECTED_SYNC_STORE_NAMES.filter(function(storeName) { return db.objectStoreNames.contains(storeName); });
+        for (var protectedIndex = 0; protectedIndex < protectedStores.length; protectedIndex += 1) {
+          var protectedTx = db.transaction(protectedStores[protectedIndex], 'readonly');
+          var protectedRows = await requestResult(protectedTx.objectStore(protectedStores[protectedIndex]).getAll());
+          await txDone(protectedTx);
+          if ((protectedRows || []).some(function(row:any) { return row && (row.syncStatus === 'pending' || row.syncStatus === 'failed'); })) {
+            return { cleared: false, reason: 'Unsynced order or delivery records must be synchronized before clearing local order data.' };
+          }
+        }
         var availableStores = ORDER_DATA_STORE_NAMES.filter(function(storeName) {
           return db.objectStoreNames.contains(storeName);
         });

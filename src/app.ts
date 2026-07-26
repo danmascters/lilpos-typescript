@@ -41,7 +41,8 @@ const ORDER_MGMT_FILTERS = {
   open: 'open',
   completed: 'completed',
   online: 'online',
-  future: 'future'
+  future: 'future',
+  delivery: 'delivery'
 };
 const ORDER_MGMT_QUEUE_FILTER_IDS = [
   ORDER_MGMT_FILTERS.open,
@@ -134,7 +135,7 @@ const PIZZA_TOPPING_PREPS: PrepModifierOption[] = [
     id: 'lite',
     label: 'LITE',
     displayPattern: 'LITE {modifier}',
-    priceBehavior: 'force_zero',
+    priceBehavior: 'none',
     priceValue: 0,
     resetsAfterUse: true,
     selectedColorRole: 'warning'
@@ -585,6 +586,7 @@ const state: any = {
     orderNumber: '',
     orderId: null,
     totalCents: 0,
+    tipCents: 0,
     changeDueCents: 0,
     source: 'new-sale' as 'new-sale' | 'orders-management'
   },
@@ -2251,15 +2253,17 @@ function closeOrderNumberDialog() {
   state.orderNumberDialog.orderNumber = '';
   state.orderNumberDialog.orderId = null;
   state.orderNumberDialog.totalCents = 0;
+  state.orderNumberDialog.tipCents = 0;
   state.orderNumberDialog.changeDueCents = 0;
   state.orderNumberDialog.source = 'new-sale';
 }
 
-function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number; changeDueCents?: number; source?: 'new-sale' | 'orders-management' } = {}) {
+function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number; tipCents?: number; changeDueCents?: number; source?: 'new-sale' | 'orders-management' } = {}) {
   state.orderNumberDialog.open = true;
   state.orderNumberDialog.orderNumber = orderNumber || '';
   state.orderNumberDialog.orderId = orderId || null;
   state.orderNumberDialog.totalCents = Number(opts.totalCents || 0);
+  state.orderNumberDialog.tipCents = Math.max(0, Number(opts.tipCents || 0));
   state.orderNumberDialog.changeDueCents = Number(opts.changeDueCents || 0);
   state.orderNumberDialog.source = opts.source || 'new-sale';
 }
@@ -2725,9 +2729,12 @@ async function handlePaymentPanePrimaryAction() {
         const orderTotalCents = Math.max(0, Number(state.paymentPaneInput?.totalCents || state.paymentPaneInput?.remainingBalanceCents || 0));
         const orderId = splitPlanOrderIdFromInput(state.paymentPaneInput);
         const orderNumber = String(state.paymentPaneInput?.displayOrderNumber || '');
+        const completedSnapshot = orderId ? await lilposDataService.getOrderHistoryByOrderId(orderId) : null;
+        const tipCents = Math.max(0, Number(completedSnapshot?.tipCents || 0));
         closePaymentPaneToSource();
         openOrderNumberDialog(orderNumber, orderId, {
-          totalCents: orderTotalCents,
+          totalCents: orderTotalCents + tipCents,
+          tipCents,
           changeDueCents: 0,
           source: 'orders-management'
         });
@@ -3217,6 +3224,7 @@ async function completePayNowOrder() {
     createdTimestamp: nowIso(),
     updatedTimestamp: nowIso(),
     orderType: payload.orderType,
+    ...initialDeliveryFields(payload.orderType),
     orderSource: payload.orderSource,
     timingType: payload.timingType,
     asapTime: payload.asapTime,
@@ -3240,6 +3248,7 @@ async function completePayNowOrder() {
     lines: payload.lines,
     subtotal: payload.subtotal,
     tax: payload.tax,
+    tipTotal: totals.tipTotal,
     total: payload.total,
     rawSnapshot: payload,
     payloadSnapshot: payload
@@ -3254,6 +3263,8 @@ async function completePayNowOrder() {
       stationId: persistedOrder.stationNumber,
       businessDate: persistedOrder.businessDate,
       orderType: persistedOrder.orderType,
+      deliveryStatus: persistedOrder.deliveryStatus,
+      assignedDriverId: persistedOrder.assignedDriverId,
       orderStatus: persistedOrder.status,
       paymentStatus: persistedOrder.paymentStatus,
       storedDisplayName: displayCustomerName,
@@ -3261,8 +3272,9 @@ async function completePayNowOrder() {
       storedAddressSummary: persistedOrder.customer?.address1 || '',
       subtotal: persistedOrder.subtotal,
       tax: persistedOrder.tax,
+      tip: persistedOrder.tipTotal,
       total: persistedOrder.total,
-      amountPaid: totals.amountPaid,
+      amountPaid: totals.baseTotal,
       remainingBalanceCents: 0,
       openedAt: persistedOrder.createdTimestamp,
       sentAt: persistedOrder.createdTimestamp,
@@ -3295,11 +3307,15 @@ async function completePayNowOrder() {
     }
 
     for (const line of persistedOrder.paymentLines || []) {
+      const baseAmountCents = Math.max(0, Math.round(Number(line.amount || 0) * 100));
+      const tipAmountCents = Math.max(0, Math.round(Number(line.tipAmount || 0) * 100));
       await lilposDataService.savePaymentHistory({
         orderId: persistedOrder.id,
         historyId: snapshot.historyId,
         paymentType: line.paymentType,
-        amount: Number(line.amount || 0) + Number(line.tipAmount || 0),
+        amountCents: baseAmountCents + tipAmountCents,
+        baseAmountCents,
+        tipAmountCents,
         paidAt: persistedOrder.updatedTimestamp,
         employeeShortName: 'System'
       });
@@ -3331,6 +3347,7 @@ async function completePayNowOrder() {
   resetTicketAfterPayment();
   openOrderNumberDialog(orderNumber, persistedOrder.id, {
     totalCents: Math.round(totals.amountDue * 100),
+    tipCents: Math.round(totals.tipTotal * 100),
     changeDueCents: Math.round(totals.changeDue * 100),
     source: 'new-sale'
   });
@@ -3363,6 +3380,7 @@ async function completePayLaterOrder() {
     createdTimestamp: nowIso(),
     updatedTimestamp: nowIso(),
     orderType: payload.orderType,
+    ...initialDeliveryFields(payload.orderType),
     orderSource: payload.orderSource,
     timingType: payload.timingType,
     asapTime: payload.asapTime,
@@ -3398,6 +3416,8 @@ async function completePayLaterOrder() {
       stationId: persistedOrder.stationNumber,
       businessDate: persistedOrder.businessDate,
       orderType: persistedOrder.orderType,
+      deliveryStatus: persistedOrder.deliveryStatus,
+      assignedDriverId: persistedOrder.assignedDriverId,
       orderStatus: persistedOrder.status,
       paymentStatus: persistedOrder.paymentStatus,
       storedDisplayName: displayCustomerName,
@@ -4751,6 +4771,20 @@ const lilposDataService = createLilposDataService({
   getFallbackCustomers: () => state.mockCustomers
 });
 window.lilposDataService = lilposDataService;
+const deliveryManagerController = window.LilposDeliveryManagerRuntime?.createController
+  ? window.LilposDeliveryManagerRuntime.createController({
+      dataService: lilposDataService,
+      onChange: () => render(),
+      afterMutation: () => refreshPersistedOrdersCache({ refreshNextOrderNumber: false, renderAfter: false })
+    })
+  : {
+      state: {
+        settings: { inHouseDeliveryEnabled: false, deliveryQueueMode: 'main_orders', driverBanksEnabled: false, driverBankReconciliationMode: 'end_of_shift' },
+        drivers: [], shifts: [], orders: [], settlements: [], settlementPreviewByDriverId: {}
+      },
+      load: async () => undefined,
+      bind: () => undefined
+    };
 window.lilposLocalDataAdmin = window.LilposLocalDataAdmin?.createLocalDataAdmin
   ? window.LilposLocalDataAdmin.createLocalDataAdmin({
       dataService: lilposDataService,
@@ -4764,6 +4798,13 @@ function runtimeSeed() {
     favoriteCategoryIds: state.favoriteCategoryIds,
     customers: state.mockCustomers
   };
+}
+
+function initialDeliveryFields(orderType) {
+  const enabled = deliveryManagerController.state.settings.inHouseDeliveryEnabled === true;
+  return String(orderType || '').toLowerCase() === 'delivery' && enabled
+    ? { deliveryStatus: 'PENDING_DELIVERY', assignedDriverId: null }
+    : { deliveryStatus: null, assignedDriverId: null };
 }
 
 function ensureMockImages(runtimePkg) {
@@ -4805,6 +4846,7 @@ function ensureActiveCategory() {
 
 async function loadFromDb() {
   await lilposDataService.ensureHistoryPersistenceReady();
+  await deliveryManagerController.load();
   await hydrateOrdersManagementViewPreferences();
   await refreshPersistedOrdersCache({ refreshNextOrderNumber: true, renderAfter: false });
   const t0 = performance.now();
@@ -4945,8 +4987,12 @@ function isQueuedFutureOrder(order, nowTs = Date.now()) {
 
 function orderQueueFilterMatch(order, queueFilter, nowTs = Date.now()) {
   const isFuture = isQueuedFutureOrder(order, nowTs);
+  const isManagedDelivery = String(order?.orderType || '').toLowerCase() === 'delivery' && !!order?.deliveryStatus;
+  const dedicatedDelivery = deliveryManagerController.state.settings.inHouseDeliveryEnabled
+    && deliveryManagerController.state.settings.deliveryQueueMode === 'dedicated_delivery_queue';
+  if (queueFilter === ORDER_MGMT_FILTERS.delivery) return isManagedDelivery;
   if (queueFilter === ORDER_MGMT_FILTERS.future) return isFuture;
-  if (queueFilter === ORDER_MGMT_FILTERS.open) return order.status === 'open' && !isFuture;
+  if (queueFilter === ORDER_MGMT_FILTERS.open) return order.status === 'open' && !isFuture && !(dedicatedDelivery && isManagedDelivery);
   if (queueFilter === ORDER_MGMT_FILTERS.completed) return order.status === 'completed';
   if (queueFilter === ORDER_MGMT_FILTERS.online) return !!order.onlineOnly && !isFuture;
   return true;
@@ -4968,13 +5014,17 @@ function queueCountForFilter(queueFilter) {
 }
 
 function orderQueueChips() {
-  return [
+  const chips = [
     { id: ORDER_MGMT_FILTERS.open, label: 'Open' },
     { id: ORDER_MGMT_FILTERS.completed, label: 'Completed' },
     { id: ORDER_MGMT_FILTERS.online, label: 'Online Only' },
     { id: ORDER_MGMT_FILTERS.future, label: 'Future Orders' },
     { id: ORDER_MGMT_FILTERS.all, label: 'All' }
   ];
+  if (deliveryManagerController.state.settings.inHouseDeliveryEnabled && deliveryManagerController.state.settings.deliveryQueueMode === 'dedicated_delivery_queue') {
+    chips.splice(1, 0, { id: ORDER_MGMT_FILTERS.delivery, label: 'Delivery' });
+  }
+  return chips;
 }
 
 function ordersManagementRowCustomerDetails(order) {
@@ -5202,6 +5252,8 @@ function filteredOrderManagementRows(options: any = {}) {
       total: Number(order.total || 0),
       paymentStatus: order.paymentStatus,
       paid: !!order.paid,
+      deliveryStatus: order.deliveryStatus || null,
+      assignedDriverId: order.assignedDriverId || null,
       isPersisted: true
     };
   });
@@ -5215,6 +5267,8 @@ function filteredOrderManagementRows(options: any = {}) {
       status: normalizeOrderStatus(order),
       paymentStatus: order.paymentStatus || (order.status === 'completed' ? 'paid' : 'unpaid'),
       paid: typeof order.paid === 'boolean' ? order.paid : order.status === 'completed',
+      deliveryStatus: order.deliveryStatus || null,
+      assignedDriverId: order.assignedDriverId || null,
       timeLabel: order.timingType === 'future' && order.futureDateTime
         ? `Future: ${formatFutureLabel(order.futureDateTime)}`
         : ordersManagementReceivedTimeLabel(order),
@@ -5478,6 +5532,11 @@ async function completeSelectedOrderPaymentFromPane(paymentLine: any, behavior: 
       idempotencyKey: `${context.idempotencyKey}|payment|${paymentLine.paymentType}|${appliedCents}|${tipAmountCents}`
     });
 
+    const recordedPayments = await lilposDataService.listPaymentHistory(context.orderId);
+    const recordedTipCents = Array.isArray(recordedPayments)
+      ? recordedPayments.reduce((sum, payment) => sum + Math.max(0, Number(payment?.tipAmountCents || 0)), 0)
+      : Math.max(0, Number(snapshot.tipCents || 0)) + tipAmountCents;
+
     await lilposDataService.appendOrderEvent({
       orderId: context.orderId,
       historyId: context.historyId || snapshot.historyId,
@@ -5505,6 +5564,7 @@ async function completeSelectedOrderPaymentFromPane(paymentLine: any, behavior: 
       orderStatus: nextOrderStatus,
       amountPaidCents: nextPaidCents,
       remainingBalanceCents: remainingCents,
+      tipCents: recordedTipCents,
       completedAt: remainingCents === 0 ? now : snapshot.completedAt,
       closedAt: remainingCents === 0 ? now : snapshot.closedAt,
       sourceSnapshot: {
@@ -5523,7 +5583,8 @@ async function completeSelectedOrderPaymentFromPane(paymentLine: any, behavior: 
           : 0;
         closePaymentPaneToSource();
         openOrderNumberDialog(snapshot.displayOrderNumber, context.orderId, {
-          totalCents,
+          totalCents: totalCents + recordedTipCents,
+          tipCents: recordedTipCents,
           changeDueCents,
           source: 'orders-management'
         });
@@ -5725,6 +5786,10 @@ function selectedOrderForDetail() {
       orderSpecialInstructions: persistedOrder.orderSpecialInstructions || persistedOrder.rawSnapshot?.orderSpecialInstructions || '',
       paymentMethodSummary: persistedOrder.paymentMethodSummary || persistedOrder.rawSnapshot?.paymentMethodSummary || '',
       paymentLines: persistedOrder.paymentLines || persistedOrder.rawSnapshot?.paymentLines || persistedOrder.payloadSnapshot?.paymentLines || [],
+      deliveryStatus: persistedOrder.deliveryStatus || null,
+      assignedDriverId: persistedOrder.assignedDriverId || null,
+      tipCents: Math.max(0, Number(persistedOrder.tipCents || Math.round(Number(persistedOrder.tip || persistedOrder.tipTotal || 0) * 100))),
+      tip: Number(persistedOrder.tip || persistedOrder.tipTotal || 0),
       auditEvents: persistedOrder.auditEvents || persistedOrder.auditTrail || persistedOrder.history || persistedOrder.events || persistedOrder.rawSnapshot?.auditEvents || persistedOrder.payloadSnapshot?.auditEvents || [],
       createdTimestamp: persistedOrder.createdTimestamp,
       updatedTimestamp: persistedOrder.updatedTimestamp,
@@ -5767,6 +5832,10 @@ function selectedOrderForDetail() {
       orderSpecialInstructions: order.orderSpecialInstructions || '',
       paymentMethodSummary: order.paymentMethodSummary || '',
       paymentLines: order.paymentLines || [],
+      deliveryStatus: order.deliveryStatus || null,
+      assignedDriverId: order.assignedDriverId || null,
+      tipCents: Math.max(0, Number(order.tipCents || Math.round(Number(order.tip || order.tipTotal || 0) * 100))),
+      tip: Number(order.tip || order.tipTotal || 0),
       auditEvents: order.auditEvents || order.auditTrail || order.history || order.events || [],
       createdTimestamp: null,
       updatedTimestamp: null,
@@ -7383,10 +7452,13 @@ function renderOrderTile(order, options: any = {}) {
   const typeLabel = ORDER_TYPES[order.orderType] || order.orderType;
   const paymentBadge = orderManagementPaymentBadge(order);
   const displayNumber = formatOrderNumberForDisplay(order.number);
+  const deliveryLabel = order.deliveryStatus ? window.LilposDeliveryManagerView.statusLabel(order.deliveryStatus) : '';
+  const assignedDriver = deliveryManagerController.state.drivers.find((driver) => driver.driverId === order.assignedDriverId)?.displayName || '';
   return `
     <button class="order-mgmt-tile${compact ? ' compact' : ''}" data-open-order="${order.id}">
       <div class="order-tile-badge-row">
         <span class="order-payment-badge ${paymentBadge.paidClass}">${paymentBadge.paidText}</span>
+        ${deliveryLabel ? `<span class="delivery-status-badge status-${String(order.deliveryStatus).toLowerCase()}">${h(deliveryLabel)}</span>` : ''}
       </div>
       <div class="order-mgmt-top">
         <b>#${h(displayNumber)}</b>
@@ -7395,6 +7467,7 @@ function renderOrderTile(order, options: any = {}) {
       <div class="order-mgmt-mid">
         <div>${h(order.customerName || 'Guest')}</div>
         <small>${h(typeLabel)} | ${h(order.timeLabel)}</small>
+        ${assignedDriver ? `<small>Driver: ${h(assignedDriver)}</small>` : ''}
       </div>
       <div class="order-mgmt-bottom">
         <small>${order.onlineOnly ? 'Online Only' : h(order.source || 'Counter')}</small>
@@ -7483,7 +7556,7 @@ function renderOrdersManagementView() {
   return `
     <section class="menu-board center-view orders-mgmt-view">
       <div class="view-head">
-        <h3>Orders Management</h3>
+        <h3>Order Manager</h3>
         <button id="ordersBackToMenu" class="btn-secondary">Back to Menu</button>
       </div>
       <div class="menu-tools">
@@ -7865,6 +7938,7 @@ const MANAGER_SETTINGS_TILES = [
   { id: 'keyboard',    icon: '&#9000;',  title: 'Keyboard Options',  desc: 'On-screen keyboard mode and behavior' },
   { id: 'stations',    icon: '&#128421;',title: 'Stations',          desc: 'Register and station settings' },
   { id: 'stationdata', icon: '&#128451;',title: 'Station Data Manager', desc: 'View local station data, sync status, and storage health' },
+  { id: 'deliverymanager', icon: '&#128666;', title: 'Delivery Manager', desc: 'Manage drivers, delivery assignments, driver banks, tips, and settlements.' },
   { id: 'ordersettings', icon: '&#128203;', title: 'Order Settings', desc: 'Order types, timing, and defaults' },
   { id: 'reports',     icon: '&#128200;',title: 'Reports',           desc: 'Sales summaries and activity' },
   { id: 'business',    icon: '&#127981;',title: 'Business Settings', desc: 'Name, address, hours, and tax' },
@@ -7954,6 +8028,13 @@ function renderManagerSettingsView() {
         </div>
       </div>
     `;
+  }
+  if (activeSection === 'deliverymanager') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header"><h2>Delivery Manager</h2><div class="mgr-settings-header-actions"><button id="mgrSectionBack" class="btn-secondary">&#8592; Back</button><button id="mgrLock" class="btn-danger">Lock Manager</button></div></div>
+        <div class="mgr-section-wrapper">${window.LilposDeliveryManagerView.render(deliveryManagerController.state)}</div>
+      </div>`;
   }
   
   // Default: show placeholder for remaining sections
@@ -8069,6 +8150,14 @@ function previousOrderCustomerBubbleHtml(order) {
   `;
 }
 
+function selectedOrderLiveTipCents(order) {
+  return window.LilposOrderTicketSummary.liveCardTipCents(
+    order,
+    state.orderPaymentContext,
+    state.paymentPaneState
+  );
+}
+
 function renderOrderDetailInTicketPane() {
   const order = selectedOrderForDetail();
   if (!order) return '';
@@ -8077,6 +8166,10 @@ function renderOrderDetailInTicketPane() {
   const paidClass = paymentBadge.paidClass;
   const paidText = paymentBadge.paidText;
   const displayNumber = formatOrderNumberForDisplay(order.number);
+  const liveTipCents = selectedOrderLiveTipCents(order);
+  const savedTipCents = Math.max(0, Number(order.tipCents || Math.round(Number(order.tip || 0) * 100)));
+  const displayedTipCents = savedTipCents + liveTipCents;
+  const recalculatedTotalCents = window.LilposOrderTicketSummary.totalWithLiveTipCents(order.total, displayedTipCents);
   return `
     <section class="ticket-section order-detail-pane">
       <div class="order-detail-head">
@@ -8089,6 +8182,7 @@ function renderOrderDetailInTicketPane() {
         <div class="order-payment-badge ${paidClass}">${paidText}</div>
         ${previousOrderPaymentSummaryHtml(order)}
       </div>
+      ${order.deliveryStatus ? `<div class="order-delivery-summary"><span class="delivery-status-badge status-${String(order.deliveryStatus).toLowerCase()}">${h(window.LilposDeliveryManagerView.statusLabel(order.deliveryStatus))}</span>${order.assignedDriverId ? `<span>Driver: ${h(deliveryManagerController.state.drivers.find((driver) => driver.driverId === order.assignedDriverId)?.displayName || order.assignedDriverId)}</span>` : ''}</div>` : ''}
       ${previousOrderAuditTrailHtml(order)}
       ${order.orderSpecialInstructions ? `<small><b>Order Instructions:</b> ${h(order.orderSpecialInstructions)}</small>` : ''}
       ${previousOrderCustomerBubbleHtml(order)}
@@ -8118,7 +8212,8 @@ function renderOrderDetailInTicketPane() {
       <div class="order-detail-totals">
         <div><span>Subtotal</span><b>${money(order.subtotal)}</b></div>
         <div><span>Tax</span><b>${money(order.tax)}</b></div>
-        <div class="grand"><span>Total</span><b>${money(order.total)}</b></div>
+        ${displayedTipCents > 0 ? `<div data-order-detail-tip="${displayedTipCents}" ${liveTipCents > 0 ? `data-order-detail-live-tip="${liveTipCents}"` : ''}><span>Tip</span><b>${money(displayedTipCents / 100)}</b></div>` : ''}
+        <div class="grand"><span>Total</span><b>${money(recalculatedTotalCents / 100)}</b></div>
       </div>
     </section>
   `;
@@ -8151,7 +8246,7 @@ function ticketPanelHtml() {
             <button id="calendarClassifier" class="icon-pill ${state.timingType === 'future' ? 'active' : ''}" title="Future order" aria-label="Future order"><span class="icon-glyph">${navIcon('calendar')}</span></button>
           </div>
           <div class="classifier-row">
-            <button id="ordersViewBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.orders ? 'active' : ''}" title="Orders management" aria-label="Orders management"><span class="icon-glyph">${navIcon('orders')}</span></button>
+            <button id="ordersViewBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.orders ? 'active' : ''}" title="Order Manager" aria-label="Order Manager"><span class="icon-glyph">${navIcon('orders')}</span></button>
             <button id="customerMgmtBtn" class="icon-pill ${state.mainView === MAIN_VIEWS.customers ? 'active' : ''}" title="Customer management" aria-label="Customer management"><span class="icon-glyph">${navIcon('customer')}</span></button>
           </div>
         </div>
@@ -8342,6 +8437,12 @@ function orderNumberDialogHtml() {
             <span class="order-receipt-meta-label">Order</span>
             <span class="order-receipt-meta-value">${displayNumber ? h(displayNumber) : '&mdash;'}</span>
           </div>
+          ${dlg.tipCents > 0 ? `
+            <div class="order-receipt-meta-row" data-order-receipt-tip="${dlg.tipCents}">
+              <span class="order-receipt-meta-label">Tip</span>
+              <span class="order-receipt-meta-value">${fmtCents(dlg.tipCents)}</span>
+            </div>
+          ` : ''}
           <div class="order-receipt-meta-row">
             <span class="order-receipt-meta-label">Ticket Total</span>
             <span class="order-receipt-meta-value">${fmtCents(dlg.totalCents)}</span>
@@ -8375,7 +8476,7 @@ function orderTypeDraftDialogHtml() {
   return `
     <div class="modal-backdrop">
       <div class="call-modal manager-modal order-type-draft-dialog">
-        <h3>${isTogo ? 'Start To-Go Order' : 'Start Dine-In Order'}</h3>
+        <h3>${isTogo ? 'Start A To-Go Order' : 'Start Dine-In Order'}</h3>
         <p>${isTogo ? 'Name and phone are optional for To-Go.' : 'Table number is optional for Dine-In.'}</p>
         ${isTogo ? `
           <div class="entry-grid">
@@ -9319,6 +9420,9 @@ function attachEvents() {
       if (state.managerSettingsSection === 'stationdata') {
         void refreshStationDataManager({ renderBefore: false });
       }
+      if (state.managerSettingsSection === 'deliverymanager') {
+        void deliveryManagerController.load();
+      }
       render();
     });
   });
@@ -9326,6 +9430,9 @@ function attachEvents() {
   $('#sdmRefresh')?.addEventListener('click', () => {
     void refreshStationDataManager();
   });
+  if (state.managerSettingsSection === 'deliverymanager') {
+    deliveryManagerController.bind(document);
+  }
 
   $('#sdmExportAll')?.addEventListener('click', () => {
     void exportAllStationData();
