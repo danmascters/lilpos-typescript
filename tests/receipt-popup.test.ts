@@ -49,6 +49,15 @@ async function bootApp(): Promise<BootedApp> {
   const repoRoot = path.resolve(__dirname, '..');
   runScriptInContext(path.join(repoRoot, 'dist', 'lilpos-runtime-data.js'), context);
   runScriptInContext(path.join(repoRoot, 'dist', 'app/order-ticket-summary.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'printer-types.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'printer-settings-service.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'lilprint-discovery.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'lilprint-client.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'escpos-builder.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'receipt-renderer.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'print-job-service.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'print-status-service.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'settings', 'printer-settings', 'printer-settings-controller.js'), context);
   runScriptInContext(path.join(repoRoot, 'dist', 'app.js'), context);
 
   // Wait for initial render
@@ -226,7 +235,7 @@ describe('receipt popup after payment', () => {
     }
   });
 
-  it('receipt popup shows print buttons and Done button', async () => {
+  it('receipt popup shows receipt action buttons and Done button', async () => {
     const app = await bootApp();
     try {
       const openFn = (app.window as any).openOrderNumberDialog;
@@ -236,8 +245,7 @@ describe('receipt popup after payment', () => {
         renderFn();
         await wait(30);
         expect(app.document.querySelector('#orderPrintCustomer')).not.toBeNull();
-        expect(app.document.querySelector('#orderPrintMerchant')).not.toBeNull();
-        expect(app.document.querySelector('#orderPrintBoth')).not.toBeNull();
+        expect(app.document.querySelector('#orderNoReceipt')).not.toBeNull();
         expect(app.document.querySelector('#orderNumberDone')).not.toBeNull();
       } else {
         expect(true).toBe(true);

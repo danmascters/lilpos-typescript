@@ -7,6 +7,10 @@ interface Window {
     buildLilposRuntimePackageFromLegacy: (legacy: any, seed?: any, deps?: any) => any;
     createLilposDataService: (deps?: any) => any;
   };
+  LilposPrinterSettingsService?: any;
+  LilposPrintJobService?: any;
+  LilposPrintStatusService?: any;
+  LilposPrinterSettings?: any;
   LilposOrdersManagement?: any;
   LilposLocalDataAdmin?: any;
   LilposStationDataManager?: any;

@@ -588,7 +588,14 @@ const state: any = {
     totalCents: 0,
     tipCents: 0,
     changeDueCents: 0,
-    source: 'new-sale' as 'new-sale' | 'orders-management'
+    source: 'new-sale' as 'new-sale' | 'orders-management',
+    autoPrintTriggered: false,
+    printingLocked: false,
+    receiptStatusMessage: '',
+    receiptStatusTone: '',
+    receiptPrintJobId: '',
+    receiptPrintJobRefId: '',
+    receiptPrintBaseUrl: ''
   },
   focusOrderTypeDraftNameOnRender: false,
   newSalePendingLineNumber: null
@@ -1957,7 +1964,7 @@ function baseMockOrders() {
   ];
 }
 
-state.mockOrders = [];
+state.mockOrders = baseMockOrders();
 
 function normalizePhone(value: string) {
   return String(value ?? '').replace(/\D/g, '').slice(0, 10);
@@ -2256,6 +2263,13 @@ function closeOrderNumberDialog() {
   state.orderNumberDialog.tipCents = 0;
   state.orderNumberDialog.changeDueCents = 0;
   state.orderNumberDialog.source = 'new-sale';
+  state.orderNumberDialog.autoPrintTriggered = false;
+  state.orderNumberDialog.printingLocked = false;
+  state.orderNumberDialog.receiptStatusMessage = '';
+  state.orderNumberDialog.receiptStatusTone = '';
+  state.orderNumberDialog.receiptPrintJobId = '';
+  state.orderNumberDialog.receiptPrintJobRefId = '';
+  state.orderNumberDialog.receiptPrintBaseUrl = '';
 }
 
 function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number; tipCents?: number; changeDueCents?: number; source?: 'new-sale' | 'orders-management' } = {}) {
@@ -2266,25 +2280,118 @@ function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number
   state.orderNumberDialog.tipCents = Math.max(0, Number(opts.tipCents || 0));
   state.orderNumberDialog.changeDueCents = Number(opts.changeDueCents || 0);
   state.orderNumberDialog.source = opts.source || 'new-sale';
+  state.orderNumberDialog.autoPrintTriggered = false;
+  state.orderNumberDialog.printingLocked = false;
+  state.orderNumberDialog.receiptStatusMessage = '';
+  state.orderNumberDialog.receiptStatusTone = '';
+  state.orderNumberDialog.receiptPrintJobId = '';
+  state.orderNumberDialog.receiptPrintJobRefId = '';
+  state.orderNumberDialog.receiptPrintBaseUrl = '';
+  void applyPostSaleReceiptBehavior();
 }
 
 async function printOrderNumberReceipt(kind) {
-  const order = await hydratePersistedOrderDetail(state.orderNumberDialog.orderId);
-  if (!order) {
-    alert('Order data is no longer available in local history.');
+  if (kind !== 'customer_receipt' && kind !== 'reprint_customer_receipt') {
+    state.orderNumberDialog.receiptStatusMessage = 'Only customer receipt printing is available in this phase.';
+    state.orderNumberDialog.receiptStatusTone = 'warn';
+    render();
     return;
   }
-  const payload = {
-    kind,
-    orderNumber: order.orderNumber,
-    stationNumber: order.stationNumber,
-    businessDate: order.businessDate,
-    total: order.total,
-    customer: order.customer,
-    lines: order.lines,
-    rawSnapshot: order.rawSnapshot || order.payloadSnapshot || null
-  };
-  alert(JSON.stringify(payload, null, 2).slice(0, 4000));
+  if (!printJobService) {
+    state.orderNumberDialog.receiptStatusMessage = 'Print service is not available in this build.';
+    state.orderNumberDialog.receiptStatusTone = 'bad';
+    render();
+    return;
+  }
+  if (state.orderNumberDialog.printingLocked) return;
+
+  const order = await hydratePersistedOrderDetail(state.orderNumberDialog.orderId);
+  if (!order) {
+    state.orderNumberDialog.receiptStatusMessage = 'Order data is no longer available in local history.';
+    state.orderNumberDialog.receiptStatusTone = 'bad';
+    render();
+    return;
+  }
+
+  state.orderNumberDialog.printingLocked = true;
+  state.orderNumberDialog.receiptStatusMessage = 'Submitting receipt...';
+  state.orderNumberDialog.receiptStatusTone = 'pending';
+  render();
+
+  const submit = await printJobService.submitCustomerReceipt({
+    order,
+    isReprint: kind === 'reprint_customer_receipt',
+    reprintId: `manual_${uid()}`,
+    originalPrintJobId: state.orderNumberDialog.receiptPrintJobId || '',
+    changeDue: Number(state.orderNumberDialog.changeDueCents || 0) / 100
+  });
+
+  if (!submit.ok) {
+    state.orderNumberDialog.printingLocked = false;
+    state.orderNumberDialog.receiptStatusMessage = submit.message || 'Unable to submit receipt.';
+    state.orderNumberDialog.receiptStatusTone = 'bad';
+    render();
+    return;
+  }
+
+  state.orderNumberDialog.receiptPrintJobId = String(submit.printJobId || '');
+  state.orderNumberDialog.receiptPrintJobRefId = String(submit.localRef?.id || '');
+  state.orderNumberDialog.receiptPrintBaseUrl = String(submit.baseUrl || '');
+  state.orderNumberDialog.receiptStatusMessage = submit.status === 'TRANSMITTED' ? 'Sent to printer' : 'Receipt queued';
+  state.orderNumberDialog.receiptStatusTone = submit.status === 'TRANSMITTED' ? 'ok' : 'pending';
+  state.orderNumberDialog.printingLocked = false;
+  render();
+
+  if (printStatusService && state.orderNumberDialog.open && submit.printJobId && submit.baseUrl) {
+    void printStatusService.pollUntilTerminal({
+      baseUrl: submit.baseUrl,
+      jobId: submit.printJobId,
+      localRef: submit.localRef,
+      fastWindowMs: 15000,
+      intervalFastMs: 1500,
+      intervalSlowMs: 6000,
+      maxRuntimeMs: 90000,
+      onUpdate: ({ status, message }) => {
+        if (!state.orderNumberDialog.open) return;
+        state.orderNumberDialog.receiptStatusMessage = message || 'Receipt queued';
+        state.orderNumberDialog.receiptStatusTone = status === 'TRANSMITTED'
+          ? 'ok'
+          : status === 'FAILED_FINAL' || status === 'CANCELED'
+          ? 'bad'
+          : status === 'RETRY_WAIT'
+          ? 'warn'
+          : 'pending';
+        render();
+      }
+    });
+  }
+}
+
+async function applyPostSaleReceiptBehavior() {
+  if (!printJobService || !state.orderNumberDialog.open) return;
+  const settings = await printJobService.resolveSettings({
+    stationId: String(lilposDataService.getStationNumber ? lilposDataService.getStationNumber() : STATION_NUMBER)
+  });
+
+  if (!settings.receiptPrintingEnabled) {
+    state.orderNumberDialog.receiptStatusMessage = 'Receipt printing is disabled.';
+    state.orderNumberDialog.receiptStatusTone = 'warn';
+    render();
+    return;
+  }
+
+  if (!settings.receiptPrinterId) {
+    state.orderNumberDialog.receiptStatusMessage = 'No receipt printer is configured.';
+    state.orderNumberDialog.receiptStatusTone = 'bad';
+    render();
+    return;
+  }
+
+  if (settings.autoPrintReceiptAfterSale && !state.orderNumberDialog.autoPrintTriggered) {
+    state.orderNumberDialog.autoPrintTriggered = true;
+    render();
+    await printOrderNumberReceipt('customer_receipt');
+  }
 }
 
 function buildMissingInfoDraft() {
@@ -4767,10 +4874,25 @@ const lilposDataService = createLilposDataService({
   nowIso,
   normalizePhone,
   isItemOutOfStock,
+  getMerchantId: () => 'local-merchant',
+  getLocationId: () => 'main-location',
   getLineCount: () => state.lineCount,
   getFallbackCustomers: () => state.mockCustomers
 });
 window.lilposDataService = lilposDataService;
+const printJobService = window.LilposPrintJobService?.createPrintJobService
+  ? window.LilposPrintJobService.createPrintJobService({ dataService: lilposDataService })
+  : null;
+const printStatusService = window.LilposPrintStatusService?.createPrintStatusService
+  ? window.LilposPrintStatusService.createPrintStatusService({ dataService: lilposDataService })
+  : null;
+const printerSettingsController = window.LilposPrinterSettings?.createController
+  ? window.LilposPrinterSettings.createController({
+      dataService: lilposDataService,
+      onChange: () => render(),
+      requestedBy: () => 'Manager'
+    })
+  : null;
 const deliveryManagerController = window.LilposDeliveryManagerRuntime?.createController
   ? window.LilposDeliveryManagerRuntime.createController({
       dataService: lilposDataService,
@@ -7930,7 +8052,7 @@ const MANAGER_SETTINGS_TILES = [
   { id: 'categories',  icon: '&#8853;',  title: 'Categories',        desc: 'Add, rename, hide categories' },
   { id: 'items',       icon: '&#9783;',  title: 'Items',             desc: 'Edit items, prices, and modifiers' },
   { id: 'outofstock',  icon: '&#9747;',  title: 'Out of Stock',      desc: 'Mark items unavailable' },
-  { id: 'printers',    icon: '&#9113;',  title: 'Printers',          desc: 'Printer routes and station config' },
+  { id: 'printers',    icon: '&#9113;',  title: 'Printer Settings',  desc: 'LilPrint agent, receipt printer role, and receipt behavior' },
   { id: 'callerid',    icon: '&#9742;',  title: 'Caller ID',         desc: 'Caller ID lines and integration' },
   { id: 'payments',    icon: '&#36;',    title: 'Payments',          desc: 'Payment methods and terminals' },
   { id: 'employees',   icon: '&#128100;',title: 'Employees',         desc: 'Employee records and PINs' },
@@ -8025,6 +8147,22 @@ function renderManagerSettingsView() {
         </div>
         <div class="mgr-section-wrapper">
           ${renderStationDataManagerView()}
+        </div>
+      </div>
+    `;
+  }
+  if (activeSection === 'printers') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrSectionBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          ${printerSettingsController ? printerSettingsController.render() : '<div class="mgr-section-content"><h3>Printer Settings</h3><p class="muted">Printer settings module is not available.</p></div>'}
         </div>
       </div>
     `;
@@ -8151,6 +8289,9 @@ function previousOrderCustomerBubbleHtml(order) {
 }
 
 function selectedOrderLiveTipCents(order) {
+  if (!window.LilposOrderTicketSummary || typeof window.LilposOrderTicketSummary.liveCardTipCents !== 'function') {
+    return 0;
+  }
   return window.LilposOrderTicketSummary.liveCardTipCents(
     order,
     state.orderPaymentContext,
@@ -8169,7 +8310,9 @@ function renderOrderDetailInTicketPane() {
   const liveTipCents = selectedOrderLiveTipCents(order);
   const savedTipCents = Math.max(0, Number(order.tipCents || Math.round(Number(order.tip || 0) * 100)));
   const displayedTipCents = savedTipCents + liveTipCents;
-  const recalculatedTotalCents = window.LilposOrderTicketSummary.totalWithLiveTipCents(order.total, displayedTipCents);
+  const recalculatedTotalCents = window.LilposOrderTicketSummary && typeof window.LilposOrderTicketSummary.totalWithLiveTipCents === 'function'
+    ? window.LilposOrderTicketSummary.totalWithLiveTipCents(order.total, displayedTipCents)
+    : Math.round((Number(order.total || 0) * 100) + displayedTipCents);
   return `
     <section class="ticket-section order-detail-pane">
       <div class="order-detail-head">
@@ -8425,6 +8568,12 @@ function newSaleConfirmDialogHtml() {
 function orderNumberDialogHtml() {
   if (!state.orderNumberDialog.open) return '';
   const dlg = state.orderNumberDialog;
+  const printerSettings = (printerSettingsController?.getDraft
+    ? printerSettingsController.getDraft()
+    : null) || (window.LilposPrinterSettingsService?.defaults?.({}) || null);
+  const receiptEnabled = !!printerSettings?.receiptPrintingEnabled;
+  const autoPrint = receiptEnabled && !!printerSettings?.autoPrintReceiptAfterSale;
+  const showPromptButtons = receiptEnabled && !autoPrint && !!printerSettings?.promptForReceiptAfterSale;
   const showPaymentInfo = dlg.totalCents > 0;
   const displayNumber = dlg.orderNumber ? formatOrderNumberForDisplay(dlg.orderNumber) : '';
   const fmtCents = (cents: number) => money(cents / 100);
@@ -8455,11 +8604,16 @@ function orderNumberDialogHtml() {
           <h3>Your Order Number Is:</h3>
           <div class="order-number-value">${h(dlg.orderNumber)}</div>
         `}
-        <div class="call-modal-actions order-number-actions">
-          <button id="orderPrintCustomer" class="btn-secondary">Print customer receipt</button>
-          <button id="orderPrintMerchant" class="btn-secondary">Print merchant receipt</button>
-          <button id="orderPrintBoth" class="btn-secondary">Print both</button>
-        </div>
+        ${receiptEnabled ? `
+          <div class="call-modal-actions order-number-actions">
+            ${showPromptButtons
+              ? `<button id="orderPrintCustomer" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>Print Receipt</button>
+                 <button id="orderNoReceipt" class="btn-secondary">No Receipt</button>`
+              : `<button id="orderPrintCustomer" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>${dlg.receiptPrintJobId ? 'Reprint Receipt' : 'Print Receipt'}</button>`
+            }
+          </div>
+        ` : ''}
+        ${dlg.receiptStatusMessage ? `<p class="order-receipt-status ${dlg.receiptStatusTone || ''}">${h(dlg.receiptStatusMessage)}</p>` : ''}
         <div class="call-modal-actions">
           <button id="orderNumberDone" class="btn-success">Done</button>
         </div>
@@ -9420,6 +9574,9 @@ function attachEvents() {
       if (state.managerSettingsSection === 'stationdata') {
         void refreshStationDataManager({ renderBefore: false });
       }
+      if (state.managerSettingsSection === 'printers') {
+        void printerSettingsController?.load();
+      }
       if (state.managerSettingsSection === 'deliverymanager') {
         void deliveryManagerController.load();
       }
@@ -9432,6 +9589,9 @@ function attachEvents() {
   });
   if (state.managerSettingsSection === 'deliverymanager') {
     deliveryManagerController.bind(document);
+  }
+  if (state.managerSettingsSection === 'printers') {
+    printerSettingsController?.bind(document);
   }
 
   $('#sdmExportAll')?.addEventListener('click', () => {
@@ -10828,8 +10988,14 @@ function attachEvents() {
   $('#newSaleContinue')?.addEventListener('click', cancelSaleConfirmed);
 
   $('#orderPrintCustomer')?.addEventListener('click', () => printOrderNumberReceipt('customer_receipt'));
-  $('#orderPrintMerchant')?.addEventListener('click', () => printOrderNumberReceipt('merchant_receipt'));
-  $('#orderPrintBoth')?.addEventListener('click', () => printOrderNumberReceipt('both_receipts'));
+  $('#orderNoReceipt')?.addEventListener('click', () => {
+    const source = state.orderNumberDialog.source;
+    closeOrderNumberDialog();
+    if (source === 'orders-management') {
+      state.mainView = MAIN_VIEWS.orders;
+    }
+    render();
+  });
   $('#orderNumberDone')?.addEventListener('click', () => {
     const source = state.orderNumberDialog.source;
     closeOrderNumberDialog();

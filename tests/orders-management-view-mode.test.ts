@@ -74,6 +74,15 @@ async function bootApp(indexedDbFactory = new FDBFactory()): Promise<BootedApp> 
   const repoRoot = path.resolve(__dirname, '..');
   runScriptInContext(path.join(repoRoot, 'dist', 'lilpos-runtime-data.js'), context);
   runScriptInContext(path.join(repoRoot, 'dist', 'app', 'orders-management-view.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'printer-types.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'printer-settings-service.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'lilprint-discovery.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'lilprint-client.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'escpos-builder.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'receipt-renderer.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'print-job-service.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'printing', 'print-status-service.js'), context);
+  runScriptInContext(path.join(repoRoot, 'dist', 'settings', 'printer-settings', 'printer-settings-controller.js'), context);
   runScriptInContext(path.join(repoRoot, 'dist', 'app.js'), context);
 
   await waitForSelector(win.document, '#ordersViewBtn');

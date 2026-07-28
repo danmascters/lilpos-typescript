@@ -86,10 +86,11 @@
     var getFallbackCustomers = safeDeps.getFallbackCustomers || function() { return []; };
     var nowIso = safeDeps.nowIso || function() { return new Date().toISOString(); };
     var dbName = safeDeps.dbName || 'BringdatSmartRegisterMockNoNpm';
-    var dbVersion = Number.isFinite(Number(safeDeps.dbVersion)) ? Number(safeDeps.dbVersion) : 4;
+    var dbVersion = Number.isFinite(Number(safeDeps.dbVersion)) ? Number(safeDeps.dbVersion) : 6;
     var legacyOrdersKey = safeDeps.legacyOrdersKey || 'lilpos_persisted_orders';
     var getStationNumber = safeDeps.getStationNumber || function() { return 1; };
     var getMerchantId = safeDeps.getMerchantId || function() { return 'local-merchant'; };
+    var getLocationId = safeDeps.getLocationId || function() { return 'local-location'; };
     var getPlanPersistenceMode = safeDeps.getPlanPersistenceMode || function() { return 'same-day'; };
 
     var STORE_KV = 'kv';
@@ -105,9 +106,16 @@
     var STORE_DRIVER_SHIFTS = 'driver_shifts';
     var STORE_DRIVER_SETTLEMENTS = 'driver_settlements';
     var STORE_DELIVERY_EVENTS = 'delivery_events';
+    var STORE_PRINTER_SETTINGS = 'printer_settings';
+    var STORE_PRINT_JOB_REFS = 'print_job_refs';
+    var STORE_POS_PRINTER_CONFIGS = 'pos_printer_configs';
+    var STORE_PRINTER_ROUTING_RULES = 'printer_routing_rules';
+    var STORE_LOCAL_PRINT_BATCHES = 'local_print_batches';
 
     var LEGACY_IMPORT_META_KEY = 'legacy_order_import_v1';
     var ORDERS_MANAGEMENT_VIEW_PREFS_KEY = 'orders_management_view_preferences_v1';
+    var PRINTER_SETTINGS_KEY = 'printer_settings_v1';
+    var PRINTER_MIGRATION_META_KEY = 'printer_settings_migration_v2';
 
     var historyBootPromise: Promise<any> | null = null;
 
@@ -203,6 +211,249 @@
       };
     }
 
+    function clampNumber(value: any, min: number, max: number, fallback: number): number {
+      var n = Number(value);
+      if (!Number.isFinite(n)) n = fallback;
+      return Math.max(min, Math.min(max, Math.round(n)));
+    }
+
+    function normalizePrinterSettingsRecord(input: any): any {
+      var source = input || {};
+      var paperWidth = String(source.paperWidth || '80mm') === '58mm' ? '58mm' : '80mm';
+      var defaultCpl = paperWidth === '58mm' ? 32 : 48;
+      var merchantId = String(source.merchantId || getMerchantId() || 'local-merchant');
+      var locationId = String(source.locationId || getLocationId() || 'local-location');
+      var stationId = source.stationId == null ? String(getStationNumber() || 1) : String(source.stationId || '');
+      var id = String(source.id || (PRINTER_SETTINGS_KEY + ':' + merchantId + ':' + locationId + ':' + stationId));
+      var stamp = String(source.updatedAt || nowIso());
+      var created = String(source.createdAt || stamp);
+      var charsPerLine = clampNumber(source.charactersPerLine, 20, 64, defaultCpl);
+      var printerPort = clampNumber(source.receiptPrinterPort, 1, 65535, 9100);
+
+      return {
+        id: id,
+        merchantId: merchantId,
+        locationId: locationId,
+        stationId: stationId,
+        agentHttpsUrl: String(source.agentHttpsUrl || 'https://localhost:3031'),
+        agentHttpUrl: String(source.agentHttpUrl || 'http://localhost:3030'),
+        preferHttps: source.preferHttps !== false,
+        receiptPrintingEnabled: source.receiptPrintingEnabled !== false,
+        promptForReceiptAfterSale: source.promptForReceiptAfterSale !== false,
+        autoPrintReceiptAfterSale: source.autoPrintReceiptAfterSale === true,
+        defaultReceiptPrinterId: source.defaultReceiptPrinterId ? String(source.defaultReceiptPrinterId) : '',
+        defaultKitchenPrinterId: source.defaultKitchenPrinterId ? String(source.defaultKitchenPrinterId) : '',
+        receiptPrinterId: source.receiptPrinterId ? String(source.receiptPrinterId) : '',
+        receiptPrinterName: source.receiptPrinterName ? String(source.receiptPrinterName) : '',
+        receiptPrinterIp: source.receiptPrinterIp ? String(source.receiptPrinterIp) : '',
+        receiptPrinterPort: printerPort,
+        receiptPrinterProfile: source.receiptPrinterProfile ? String(source.receiptPrinterProfile) : '',
+        receiptPrinterTransport: 'tcp_9100',
+        paperWidth: paperWidth,
+        charactersPerLine: charsPerLine,
+        leftMarginChars: clampNumber(source.leftMarginChars, 0, 8, 0),
+        rightMarginChars: clampNumber(source.rightMarginChars, 0, 8, 0),
+        fontFamilyMode: String(source.fontFamilyMode || 'font_a') === 'font_b' ? 'font_b' : 'font_a',
+        defaultTextScale: String(source.defaultTextScale || 'normal'),
+        headerTextScale: String(source.headerTextScale || 'double_width'),
+        emphasizeTotals: source.emphasizeTotals !== false,
+        emphasizeOrderNumber: source.emphasizeOrderNumber !== false,
+        condenseItemDescriptions: source.condenseItemDescriptions === true,
+        printLogo: source.printLogo === true,
+        printMerchantName: source.printMerchantName !== false,
+        printMerchantAddress: source.printMerchantAddress !== false,
+        printMerchantPhone: source.printMerchantPhone !== false,
+        printOrderNumber: source.printOrderNumber !== false,
+        printOrderType: source.printOrderType !== false,
+        printCustomerName: source.printCustomerName !== false,
+        printCustomerPhone: source.printCustomerPhone !== false,
+        printCustomerAddressForDelivery: source.printCustomerAddressForDelivery !== false,
+        printItemDescriptions: source.printItemDescriptions !== false,
+        printItemQuantities: source.printItemQuantities !== false,
+        printItemPrices: source.printItemPrices !== false,
+        printModifiers: source.printModifiers !== false,
+        printModifierPrices: source.printModifierPrices !== false,
+        printItemNotes: source.printItemNotes !== false,
+        printOrderNotes: source.printOrderNotes !== false,
+        printSubtotal: source.printSubtotal !== false,
+        printTax: source.printTax !== false,
+        printDiscounts: source.printDiscounts !== false,
+        printTips: source.printTips !== false,
+        printTotal: source.printTotal !== false,
+        printPayments: source.printPayments !== false,
+        printAmountTendered: source.printAmountTendered !== false,
+        printChangeDue: source.printChangeDue !== false,
+        printEmployeeName: source.printEmployeeName !== false,
+        printStationName: source.printStationName !== false,
+        printDateTime: source.printDateTime !== false,
+        footerMessage: String(source.footerMessage || 'Thank you!'),
+        printDuplicateLabelOnReprint: source.printDuplicateLabelOnReprint !== false,
+        feedLinesBeforeCut: clampNumber(source.feedLinesBeforeCut, 0, 10, 4),
+        cutPaperAfterReceipt: source.cutPaperAfterReceipt !== false,
+        openCashDrawerWithCashSale: source.openCashDrawerWithCashSale === true,
+        kitchenPaperWidth: String(source.kitchenPaperWidth || source.paperWidth || '80mm') === '58mm' ? '58mm' : '80mm',
+        kitchenCharactersPerLine: clampNumber(source.kitchenCharactersPerLine, 20, 64, paperWidth === '58mm' ? 32 : 48),
+        kitchenOrderNumberScale: String(source.kitchenOrderNumberScale || 'double_size'),
+        kitchenItemTextScale: String(source.kitchenItemTextScale || 'normal'),
+        kitchenModifierTextScale: String(source.kitchenModifierTextScale || 'normal'),
+        kitchenShowPromisedTime: source.kitchenShowPromisedTime !== false,
+        kitchenShowEmployeeName: source.kitchenShowEmployeeName !== false,
+        kitchenShowStationName: source.kitchenShowStationName !== false,
+        kitchenShowOrderNotes: source.kitchenShowOrderNotes !== false,
+        kitchenShowItemNotes: source.kitchenShowItemNotes !== false,
+        copies: clampNumber(source.copies, 1, 20, 1),
+        priority: ['low', 'normal', 'high'].indexOf(String(source.priority || 'normal')) >= 0 ? String(source.priority || 'normal') : 'normal',
+        retryEnabled: source.retryEnabled !== false,
+        maxAttempts: clampNumber(source.maxAttempts, 1, 20, 5),
+        migratedToMultiPrinterV2At: source.migratedToMultiPrinterV2At ? String(source.migratedToMultiPrinterV2At) : '',
+        createdAt: created,
+        updatedAt: stamp,
+        syncStatus: source.syncStatus ? String(source.syncStatus) : (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only')
+      };
+    }
+
+    function slugToken(value: any): string {
+      return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 28);
+    }
+
+    function randomToken(length?: number): string {
+      var target = Math.max(4, Math.min(12, Number(length || 6)));
+      var alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      var out = '';
+      for (var i = 0; i < target; i += 1) {
+        out += alphabet[Math.floor(Math.random() * alphabet.length)];
+      }
+      return out;
+    }
+
+    function normalizeStablePrinterId(value: any, nameFallback?: any): string {
+      var raw = String(value || '').trim();
+      if (/^[A-Za-z0-9_-]+$/.test(raw)) return raw;
+      var fromName = slugToken(nameFallback || 'printer');
+      return 'printer_' + (fromName || 'device') + '_' + randomToken(4);
+    }
+
+    function normalizePosPrinterConfigRecord(input: any): any {
+      var source = input || {};
+      var stamp = String(source.updatedAt || nowIso());
+      var created = String(source.createdAt || stamp);
+      var id = normalizeStablePrinterId(source.id, source.name || source.description || source.primaryRole || 'printer');
+      var primaryRole = String(source.primaryRole || 'receipt').toLowerCase();
+      var allowedRoles = ['receipt', 'kitchen', 'pizza', 'expo', 'bar', 'delivery', 'label', 'cash_drawer', 'custom'];
+      if (allowedRoles.indexOf(primaryRole) < 0) primaryRole = 'custom';
+
+      return {
+        id: id,
+        merchantId: String(source.merchantId || getMerchantId() || 'local-merchant'),
+        locationId: String(source.locationId || getLocationId() || 'local-location'),
+        name: String(source.name || 'Printer').trim() || 'Printer',
+        description: String(source.description || ''),
+        enabled: source.enabled !== false,
+        primaryRole: primaryRole,
+        customRoleName: String(source.customRoleName || ''),
+        secondaryRoles: Array.isArray(source.secondaryRoles)
+          ? source.secondaryRoles.map(function(value: any) { return String(value || '').trim(); }).filter(Boolean)
+          : [],
+        ip: String(source.ip || source.receiptPrinterIp || '').trim(),
+        port: clampNumber(source.port != null ? source.port : source.receiptPrinterPort, 1, 65535, 9100),
+        transport: 'tcp_9100',
+        profile: String(source.profile || source.receiptPrinterProfile || 'generic_escpos'),
+        paperWidth: String(source.paperWidth || '80mm') === '58mm' ? '58mm' : '80mm',
+        charactersPerLine: clampNumber(source.charactersPerLine, 20, 64, String(source.paperWidth || '80mm') === '58mm' ? 32 : 48),
+        defaultCopies: clampNumber(source.defaultCopies != null ? source.defaultCopies : source.copies, 1, 20, 1),
+        retryEnabled: source.retryEnabled !== false,
+        maxAttempts: clampNumber(source.maxAttempts, 1, 20, 5),
+        cutPaper: source.cutPaper !== false,
+        cashDrawerConnected: source.cashDrawerConnected === true,
+        routeLabels: Array.isArray(source.routeLabels)
+          ? source.routeLabels.map(function(value: any) { return String(value || '').trim(); }).filter(Boolean)
+          : [],
+        disabledAt: source.enabled === false
+          ? String(source.disabledAt || stamp)
+          : '',
+        createdAt: created,
+        updatedAt: stamp,
+        syncStatus: source.syncStatus ? String(source.syncStatus) : (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only')
+      };
+    }
+
+    function normalizePrinterRoutingRuleRecord(input: any): any {
+      var source = input || {};
+      var stamp = String(source.updatedAt || nowIso());
+      var created = String(source.createdAt || stamp);
+      var ticketType = String(source.ticketType || 'customer_receipt').toLowerCase();
+      var trigger = String(source.trigger || 'manual_print').toLowerCase();
+      var itemMatchMode = String(source.itemMatchMode || 'all').toLowerCase();
+      var ticketContentMode = String(source.ticketContentMode || 'full').toLowerCase();
+      return {
+        id: String(source.id || ('rule_' + randomToken(8))),
+        merchantId: String(source.merchantId || getMerchantId() || 'local-merchant'),
+        locationId: String(source.locationId || getLocationId() || 'local-location'),
+        name: String(source.name || 'Routing Rule').trim() || 'Routing Rule',
+        enabled: source.enabled !== false,
+        sortOrder: Math.max(0, Number(source.sortOrder || 0)),
+        destinationPrinterId: String(source.destinationPrinterId || ''),
+        ticketType: ticketType,
+        trigger: trigger,
+        orderTypes: Array.isArray(source.orderTypes)
+          ? source.orderTypes.map(function(value: any) { return String(value || '').trim().toLowerCase(); }).filter(Boolean)
+          : ['all'],
+        orderSources: Array.isArray(source.orderSources)
+          ? source.orderSources.map(function(value: any) { return String(value || '').trim().toLowerCase(); }).filter(Boolean)
+          : ['all'],
+        itemMatchMode: itemMatchMode,
+        printerRouteIds: Array.isArray(source.printerRouteIds)
+          ? source.printerRouteIds.map(function(value: any) { return String(value || '').trim().toLowerCase(); }).filter(Boolean)
+          : [],
+        categoryIds: Array.isArray(source.categoryIds)
+          ? source.categoryIds.map(function(value: any) { return String(value || '').trim(); }).filter(Boolean)
+          : [],
+        itemIds: Array.isArray(source.itemIds)
+          ? source.itemIds.map(function(value: any) { return String(value || '').trim(); }).filter(Boolean)
+          : [],
+        excludedCategoryIds: Array.isArray(source.excludedCategoryIds)
+          ? source.excludedCategoryIds.map(function(value: any) { return String(value || '').trim(); }).filter(Boolean)
+          : [],
+        excludedItemIds: Array.isArray(source.excludedItemIds)
+          ? source.excludedItemIds.map(function(value: any) { return String(value || '').trim(); }).filter(Boolean)
+          : [],
+        ticketContentMode: ticketContentMode,
+        includeCustomerName: source.includeCustomerName !== false,
+        includeCustomerPhone: source.includeCustomerPhone === true,
+        includeDeliveryAddress: source.includeDeliveryAddress === true,
+        includeCustomerNotes: source.includeCustomerNotes === true,
+        copies: clampNumber(source.copies, 1, 20, 1),
+        priority: ['low', 'normal', 'high'].indexOf(String(source.priority || 'normal')) >= 0 ? String(source.priority || 'normal') : 'normal',
+        isFallbackRule: source.isFallbackRule === true,
+        stopAfterMatch: source.stopAfterMatch === true,
+        formattingOverrideId: String(source.formattingOverrideId || ''),
+        createdAt: created,
+        updatedAt: stamp,
+        syncStatus: source.syncStatus ? String(source.syncStatus) : (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only')
+      };
+    }
+
+    function normalizeLocalPrintBatchRecord(input: any): any {
+      var source = input || {};
+      var stamp = String(source.updatedAt || nowIso());
+      return {
+        id: String(source.id || ('batch_' + Date.now() + '_' + randomToken(6))),
+        orderId: String(source.orderId || ''),
+        trigger: String(source.trigger || 'manual_print'),
+        requestedAt: String(source.requestedAt || stamp),
+        requiredJobCount: Math.max(0, Number(source.requiredJobCount || 0)),
+        optionalJobCount: Math.max(0, Number(source.optionalJobCount || 0)),
+        overallStatus: String(source.overallStatus || 'BUILDING'),
+        createdAt: String(source.createdAt || stamp),
+        updatedAt: stamp,
+        syncStatus: source.syncStatus ? String(source.syncStatus) : (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only')
+      };
+    }
+
     function safeParseLegacyOrders(): any[] {
       try {
         var raw = global.localStorage && global.localStorage.getItem(legacyOrdersKey);
@@ -263,6 +514,132 @@
       if (!db.objectStoreNames.contains(STORE_DELIVERY_EVENTS)) {
         var events = db.createObjectStore(STORE_DELIVERY_EVENTS, { keyPath: 'deliveryEventId' });
         events.createIndex('by_orderId', 'orderId', { unique: false }); events.createIndex('by_driverId', 'driverId', { unique: false }); events.createIndex('by_eventType', 'eventType', { unique: false }); events.createIndex('by_createdAt', 'createdAt', { unique: false }); events.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+    }
+
+    function ensurePrinterStores(db: IDBDatabase) {
+      if (!db.objectStoreNames.contains(STORE_PRINTER_SETTINGS)) {
+        var printerSettings = db.createObjectStore(STORE_PRINTER_SETTINGS, { keyPath: 'id' });
+        printerSettings.createIndex('by_merchantId', 'merchantId', { unique: false });
+        printerSettings.createIndex('by_locationId', 'locationId', { unique: false });
+        printerSettings.createIndex('by_stationId', 'stationId', { unique: false });
+        printerSettings.createIndex('by_updatedAt', 'updatedAt', { unique: false });
+        printerSettings.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_PRINT_JOB_REFS)) {
+        var printJobs = db.createObjectStore(STORE_PRINT_JOB_REFS, { keyPath: 'id' });
+        printJobs.createIndex('by_orderId', 'orderId', { unique: false });
+        printJobs.createIndex('by_printJobId', 'printJobId', { unique: false });
+        printJobs.createIndex('by_idempotencyKey', 'idempotencyKey', { unique: true });
+        printJobs.createIndex('by_lastKnownStatus', 'lastKnownStatus', { unique: false });
+        printJobs.createIndex('by_requestedAt', 'requestedAt', { unique: false });
+        printJobs.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+    }
+
+    function ensureMultiPrinterStores(db: IDBDatabase) {
+      if (!db.objectStoreNames.contains(STORE_POS_PRINTER_CONFIGS)) {
+        var printers = db.createObjectStore(STORE_POS_PRINTER_CONFIGS, { keyPath: 'id' });
+        printers.createIndex('by_merchantId', 'merchantId', { unique: false });
+        printers.createIndex('by_locationId', 'locationId', { unique: false });
+        printers.createIndex('by_enabled', 'enabled', { unique: false });
+        printers.createIndex('by_primaryRole', 'primaryRole', { unique: false });
+        printers.createIndex('by_updatedAt', 'updatedAt', { unique: false });
+        printers.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_PRINTER_ROUTING_RULES)) {
+        var rules = db.createObjectStore(STORE_PRINTER_ROUTING_RULES, { keyPath: 'id' });
+        rules.createIndex('by_merchantId', 'merchantId', { unique: false });
+        rules.createIndex('by_locationId', 'locationId', { unique: false });
+        rules.createIndex('by_enabled', 'enabled', { unique: false });
+        rules.createIndex('by_sortOrder', 'sortOrder', { unique: false });
+        rules.createIndex('by_ticketType', 'ticketType', { unique: false });
+        rules.createIndex('by_trigger', 'trigger', { unique: false });
+        rules.createIndex('by_destinationPrinterId', 'destinationPrinterId', { unique: false });
+        rules.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_LOCAL_PRINT_BATCHES)) {
+        var batches = db.createObjectStore(STORE_LOCAL_PRINT_BATCHES, { keyPath: 'id' });
+        batches.createIndex('by_orderId', 'orderId', { unique: false });
+        batches.createIndex('by_trigger', 'trigger', { unique: false });
+        batches.createIndex('by_requestedAt', 'requestedAt', { unique: false });
+        batches.createIndex('by_overallStatus', 'overallStatus', { unique: false });
+        batches.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+    }
+
+    function seedMultiPrinterFromLegacySettings(tx: IDBTransaction) {
+      if (!tx) return;
+      try {
+        var settingsStore = tx.objectStore(STORE_PRINTER_SETTINGS);
+        var printerStore = tx.objectStore(STORE_POS_PRINTER_CONFIGS);
+        var rulesStore = tx.objectStore(STORE_PRINTER_ROUTING_RULES);
+
+        settingsStore.getAll().onsuccess = function(event: any) {
+          var settingsRows = Array.isArray(event && event.target && event.target.result) ? event.target.result : [];
+          settingsRows.forEach(function(settings: any) {
+            if (!settings || !settings.receiptPrinterId) return;
+            var printer = normalizePosPrinterConfigRecord({
+              id: settings.receiptPrinterId,
+              merchantId: settings.merchantId,
+              locationId: settings.locationId,
+              name: settings.receiptPrinterName || 'Front Receipt Printer',
+              description: 'Migrated from single receipt printer settings',
+              enabled: true,
+              primaryRole: 'receipt',
+              secondaryRoles: settings.openCashDrawerWithCashSale ? ['cash_drawer'] : [],
+              ip: settings.receiptPrinterIp,
+              port: settings.receiptPrinterPort,
+              profile: settings.receiptPrinterProfile || 'generic_escpos',
+              paperWidth: settings.paperWidth,
+              charactersPerLine: settings.charactersPerLine,
+              defaultCopies: settings.copies,
+              retryEnabled: settings.retryEnabled,
+              maxAttempts: settings.maxAttempts,
+              cutPaper: settings.cutPaperAfterReceipt,
+              cashDrawerConnected: settings.openCashDrawerWithCashSale,
+              createdAt: settings.createdAt,
+              updatedAt: settings.updatedAt,
+              syncStatus: settings.syncStatus
+            });
+            printerStore.put(printer);
+
+            var routingRule = normalizePrinterRoutingRuleRecord({
+              id: 'rule_receipt_default_' + slugToken(printer.id || 'front'),
+              merchantId: settings.merchantId,
+              locationId: settings.locationId,
+              name: 'Customer Receipt',
+              enabled: true,
+              sortOrder: 10,
+              destinationPrinterId: printer.id,
+              ticketType: 'customer_receipt',
+              trigger: 'sale_completed',
+              orderTypes: ['all'],
+              orderSources: ['all'],
+              itemMatchMode: 'all',
+              ticketContentMode: 'full',
+              includeCustomerName: true,
+              includeCustomerPhone: false,
+              includeDeliveryAddress: false,
+              includeCustomerNotes: false,
+              copies: settings.copies || 1,
+              priority: settings.priority || 'normal',
+              isFallbackRule: false,
+              stopAfterMatch: false,
+              createdAt: settings.createdAt,
+              updatedAt: settings.updatedAt,
+              syncStatus: settings.syncStatus
+            });
+            rulesStore.put(routingRule);
+
+            var next = normalizePrinterSettingsRecord(settings || {});
+            if (!next.defaultReceiptPrinterId && next.receiptPrinterId) next.defaultReceiptPrinterId = next.receiptPrinterId;
+            next.migratedToMultiPrinterV2At = next.migratedToMultiPrinterV2At || nowIso();
+            settingsStore.put(next);
+          });
+        };
+      } catch (_err) {
+        // Keep migration non-destructive.
       }
     }
 
@@ -360,6 +737,23 @@
             }
             if (tx && tx.objectStore && db.objectStoreNames.contains(STORE_META)) {
               try { tx.objectStore(STORE_META).put({ id: 'schema_version', value: 4, migratedAt: nowIso() }); } catch (_err) {}
+            }
+          }
+
+          if (oldVersion < 5) {
+            ensurePrinterStores(db);
+            if (tx && tx.objectStore && db.objectStoreNames.contains(STORE_META)) {
+              try { tx.objectStore(STORE_META).put({ id: 'schema_version', value: 5, migratedAt: nowIso() }); } catch (_err) {}
+            }
+          }
+
+          if (oldVersion < 6) {
+            ensurePrinterStores(db);
+            ensureMultiPrinterStores(db);
+            seedMultiPrinterFromLegacySettings(tx);
+            if (tx && tx.objectStore && db.objectStoreNames.contains(STORE_META)) {
+              try { tx.objectStore(STORE_META).put({ id: 'schema_version', value: 6, migratedAt: nowIso() }); } catch (_err) {}
+              try { tx.objectStore(STORE_META).put({ id: PRINTER_MIGRATION_META_KEY, migratedAt: nowIso(), status: 'done' }); } catch (_err2) {}
             }
           }
         };
@@ -807,6 +1201,296 @@
         return normalized;
       },
 
+      defaultPrinterSettings: function(input?: any) {
+        return normalizePrinterSettingsRecord(input || {});
+      },
+
+      loadPrinterSettings: async function(input?: any) {
+        await ensureHistoryPersistenceReady();
+        var defaults = normalizePrinterSettingsRecord(input || {});
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_PRINTER_SETTINGS, 'readonly');
+        var store = tx.objectStore(STORE_PRINTER_SETTINGS);
+        var row = await requestResult(store.get(defaults.id));
+        await txDone(tx);
+        return normalizePrinterSettingsRecord(Object.assign({}, defaults, row || {}));
+      },
+
+      savePrinterSettings: async function(input: any) {
+        await ensureHistoryPersistenceReady();
+        var current = await this.loadPrinterSettings(input || {});
+        var merged = Object.assign({}, current, input || {}, {
+          id: current.id,
+          merchantId: current.merchantId,
+          locationId: current.locationId,
+          stationId: current.stationId,
+          createdAt: current.createdAt || nowIso(),
+          updatedAt: nowIso(),
+          syncStatus: getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only'
+        });
+        var normalized = normalizePrinterSettingsRecord(merged);
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_PRINTER_SETTINGS, 'readwrite');
+        tx.objectStore(STORE_PRINTER_SETTINGS).put(normalized);
+        await txDone(tx);
+        return normalized;
+      },
+
+      listPosPrinterConfigs: async function(options?: any) {
+        await ensureHistoryPersistenceReady();
+        var rows = await listStoreAll(STORE_POS_PRINTER_CONFIGS);
+        var merchantId = String(options && options.merchantId || getMerchantId() || '');
+        var locationId = String(options && options.locationId || getLocationId() || '');
+        rows = rows.filter(function(row: any) {
+          if (merchantId && String(row.merchantId || '') !== merchantId) return false;
+          if (locationId && String(row.locationId || '') !== locationId) return false;
+          if (options && options.includeDisabled !== true && row.enabled === false) return false;
+          return true;
+        });
+        rows.sort(function(a: any, b: any) {
+          return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' });
+        });
+        return rows.map(function(row: any) { return normalizePosPrinterConfigRecord(row); });
+      },
+
+      getPosPrinterConfigById: async function(printerId: string) {
+        await ensureHistoryPersistenceReady();
+        var id = String(printerId || '').trim();
+        if (!id) return null;
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_POS_PRINTER_CONFIGS, 'readonly');
+        var row = await requestResult(tx.objectStore(STORE_POS_PRINTER_CONFIGS).get(id));
+        await txDone(tx);
+        return row ? normalizePosPrinterConfigRecord(row) : null;
+      },
+
+      upsertPosPrinterConfig: async function(input: any) {
+        await ensureHistoryPersistenceReady();
+        var normalized = normalizePosPrinterConfigRecord(input || {});
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_POS_PRINTER_CONFIGS, 'readwrite');
+        var store = tx.objectStore(STORE_POS_PRINTER_CONFIGS);
+        var current = await requestResult(store.get(normalized.id));
+        var next = normalizePosPrinterConfigRecord(Object.assign({}, current || {}, normalized, {
+          id: current && current.id ? current.id : normalized.id,
+          createdAt: current && current.createdAt ? current.createdAt : normalized.createdAt,
+          updatedAt: nowIso(),
+          syncStatus: getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only'
+        }));
+        store.put(next);
+        await txDone(tx);
+        return next;
+      },
+
+      deactivatePosPrinterConfig: async function(printerId: string) {
+        await ensureHistoryPersistenceReady();
+        var id = String(printerId || '').trim();
+        if (!id) throw new Error('Printer id is required.');
+        var current = await this.getPosPrinterConfigById(id);
+        if (!current) throw new Error('Printer not found.');
+        return this.upsertPosPrinterConfig(Object.assign({}, current, {
+          enabled: false,
+          disabledAt: nowIso()
+        }));
+      },
+
+      listPrinterRoutingRules: async function(options?: any) {
+        await ensureHistoryPersistenceReady();
+        var rows = await listStoreAll(STORE_PRINTER_ROUTING_RULES);
+        var merchantId = String(options && options.merchantId || getMerchantId() || '');
+        var locationId = String(options && options.locationId || getLocationId() || '');
+        rows = rows.filter(function(row: any) {
+          if (merchantId && String(row.merchantId || '') !== merchantId) return false;
+          if (locationId && String(row.locationId || '') !== locationId) return false;
+          if (options && options.includeDisabled !== true && row.enabled === false) return false;
+          return true;
+        });
+        rows.sort(function(a: any, b: any) { return Number(a.sortOrder || 0) - Number(b.sortOrder || 0); });
+        return rows.map(function(row: any) { return normalizePrinterRoutingRuleRecord(row); });
+      },
+
+      savePrinterRoutingRule: async function(input: any) {
+        await ensureHistoryPersistenceReady();
+        var normalized = normalizePrinterRoutingRuleRecord(input || {});
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_PRINTER_ROUTING_RULES, 'readwrite');
+        var store = tx.objectStore(STORE_PRINTER_ROUTING_RULES);
+        var current = await requestResult(store.get(normalized.id));
+
+        var sortOrder = Number(normalized.sortOrder || 0);
+        if (!(sortOrder > 0)) {
+          var allRows = await requestResult(store.getAll());
+          var maxSort = Array.isArray(allRows)
+            ? allRows.reduce(function(best: number, row: any) { return Math.max(best, Number(row && row.sortOrder || 0)); }, 0)
+            : 0;
+          sortOrder = maxSort + 10;
+        }
+
+        var next = normalizePrinterRoutingRuleRecord(Object.assign({}, current || {}, normalized, {
+          id: current && current.id ? current.id : normalized.id,
+          createdAt: current && current.createdAt ? current.createdAt : normalized.createdAt,
+          updatedAt: nowIso(),
+          sortOrder: sortOrder,
+          syncStatus: getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only'
+        }));
+        store.put(next);
+        await txDone(tx);
+        return next;
+      },
+
+      deletePrinterRoutingRule: async function(ruleId: string) {
+        await ensureHistoryPersistenceReady();
+        var id = String(ruleId || '').trim();
+        if (!id) return false;
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_PRINTER_ROUTING_RULES, 'readwrite');
+        tx.objectStore(STORE_PRINTER_ROUTING_RULES).delete(id);
+        await txDone(tx);
+        return true;
+      },
+
+      saveLocalPrintBatch: async function(input: any) {
+        await ensureHistoryPersistenceReady();
+        var normalized = normalizeLocalPrintBatchRecord(input || {});
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_LOCAL_PRINT_BATCHES, 'readwrite');
+        var store = tx.objectStore(STORE_LOCAL_PRINT_BATCHES);
+        var current = await requestResult(store.get(normalized.id));
+        var next = normalizeLocalPrintBatchRecord(Object.assign({}, current || {}, normalized, {
+          id: current && current.id ? current.id : normalized.id,
+          createdAt: current && current.createdAt ? current.createdAt : normalized.createdAt,
+          updatedAt: nowIso(),
+          syncStatus: getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only'
+        }));
+        store.put(next);
+        await txDone(tx);
+        return next;
+      },
+
+      updateLocalPrintBatch: async function(batchId: string, patch: any) {
+        await ensureHistoryPersistenceReady();
+        var id = String(batchId || '').trim();
+        if (!id) return null;
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_LOCAL_PRINT_BATCHES, 'readwrite');
+        var store = tx.objectStore(STORE_LOCAL_PRINT_BATCHES);
+        var current = await requestResult(store.get(id));
+        if (!current) {
+          await txDone(tx);
+          return null;
+        }
+        var next = normalizeLocalPrintBatchRecord(Object.assign({}, current, patch || {}, {
+          id: current.id,
+          createdAt: current.createdAt,
+          updatedAt: nowIso(),
+          syncStatus: getPlanPersistenceMode() === 'persistent' ? 'pending' : current.syncStatus || 'local-only'
+        }));
+        store.put(next);
+        await txDone(tx);
+        return next;
+      },
+
+      listLocalPrintBatches: async function(options?: any) {
+        await ensureHistoryPersistenceReady();
+        var rows = await listStoreAll(STORE_LOCAL_PRINT_BATCHES);
+        if (options && options.orderId) {
+          rows = rows.filter(function(row: any) { return String(row.orderId || '') === String(options.orderId); });
+        }
+        rows.sort(function(a: any, b: any) {
+          return new Date(b && b.requestedAt || 0).getTime() - new Date(a && a.requestedAt || 0).getTime();
+        });
+        return rows.map(function(row: any) { return normalizeLocalPrintBatchRecord(row); });
+      },
+
+      saveLocalPrintJobReference: async function(input: any) {
+        await ensureHistoryPersistenceReady();
+        var stamp = nowIso();
+        var id = String(input && input.id || ('print_ref_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)));
+        var idempotencyKey = String(input && input.idempotencyKey || '').trim();
+        if (!idempotencyKey) throw new Error('saveLocalPrintJobReference requires idempotencyKey');
+        var row = {
+          id: id,
+          orderId: String(input && input.orderId || ''),
+          batchId: String(input && input.batchId || ''),
+          printJobId: String(input && input.printJobId || ''),
+          idempotencyKey: idempotencyKey,
+          jobType: String(input && input.jobType || 'customer_receipt'),
+          printerRole: String(input && input.printerRole || 'receipt'),
+          printerId: String(input && input.printerId || ''),
+          requestedAt: String(input && input.requestedAt || stamp),
+          lastKnownStatus: String(input && input.lastKnownStatus || 'QUEUED'),
+          lastStatusAt: String(input && input.lastStatusAt || stamp),
+          lastErrorCode: String(input && input.lastErrorCode || ''),
+          lastErrorMessage: String(input && input.lastErrorMessage || ''),
+          originalPrintJobId: String(input && input.originalPrintJobId || ''),
+          isReprint: input && input.isReprint === true,
+          syncStatus: String(input && input.syncStatus || (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only')),
+          createdAt: String(input && input.createdAt || stamp),
+          updatedAt: String(input && input.updatedAt || stamp)
+        };
+
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_PRINT_JOB_REFS, 'readwrite');
+        var store = tx.objectStore(STORE_PRINT_JOB_REFS);
+        var existing = await requestResult(store.index('by_idempotencyKey').get(idempotencyKey));
+        if (existing) {
+          var next = Object.assign({}, existing, row, {
+            id: existing.id,
+            createdAt: existing.createdAt || row.createdAt,
+            updatedAt: nowIso()
+          });
+          store.put(next);
+          await txDone(tx);
+          return next;
+        }
+        store.put(row);
+        await txDone(tx);
+        return row;
+      },
+
+      updateLocalPrintJobReference: async function(id: string, patch: any) {
+        await ensureHistoryPersistenceReady();
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_PRINT_JOB_REFS, 'readwrite');
+        var store = tx.objectStore(STORE_PRINT_JOB_REFS);
+        var current = await requestResult(store.get(id));
+        if (!current) {
+          await txDone(tx);
+          return null;
+        }
+        var next = Object.assign({}, current, patch || {}, {
+          id: current.id,
+          updatedAt: nowIso(),
+          syncStatus: getPlanPersistenceMode() === 'persistent' ? 'pending' : current.syncStatus || 'local-only'
+        });
+        store.put(next);
+        await txDone(tx);
+        return next;
+      },
+
+      findLocalPrintJobReferenceByIdempotencyKey: async function(idempotencyKey: string) {
+        await ensureHistoryPersistenceReady();
+        var key = String(idempotencyKey || '').trim();
+        if (!key) return null;
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_PRINT_JOB_REFS, 'readonly');
+        var row = await requestResult(tx.objectStore(STORE_PRINT_JOB_REFS).index('by_idempotencyKey').get(key));
+        await txDone(tx);
+        return row || null;
+      },
+
+      listLocalPrintJobReferences: async function(options?: any) {
+        await ensureHistoryPersistenceReady();
+        var rows = await listStoreAll(STORE_PRINT_JOB_REFS);
+        if (options && options.orderId) {
+          rows = rows.filter(function(row: any) { return String(row.orderId || '') === String(options.orderId); });
+        }
+        rows.sort(function(a: any, b: any) {
+          return new Date(b && b.requestedAt || 0).getTime() - new Date(a && a.requestedAt || 0).getTime();
+        });
+        return rows;
+      },
+
       loadRuntimePackage: function(input: any, seed?: any) {
         var runtime = buildLilposRuntimePackageFromLegacy(input, seed || {}, safeDeps);
         runtime.customers = Array.isArray(runtime.customers) && runtime.customers.length ? runtime.customers : ((seed && seed.customers) || []);
@@ -1008,6 +1692,14 @@
 
       getBusinessDate: function() {
         return businessDateNow();
+      },
+
+      getMerchantId: function() {
+        return String(getMerchantId() || 'local-merchant');
+      },
+
+      getLocationId: function() {
+        return String(getLocationId() || 'local-location');
       },
 
       getStationNumber: function() {
@@ -1358,6 +2050,11 @@
         var driverShifts = (await listStoreAll(STORE_DRIVER_SHIFTS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
         var settlements = (await listStoreAll(STORE_DRIVER_SETTLEMENTS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
         var deliveryEvents = (await listStoreAll(STORE_DELIVERY_EVENTS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var printerSettings = (await listStoreAll(STORE_PRINTER_SETTINGS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var printJobRefs = (await listStoreAll(STORE_PRINT_JOB_REFS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var posPrinters = (await listStoreAll(STORE_POS_PRINTER_CONFIGS)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var routingRules = (await listStoreAll(STORE_PRINTER_ROUTING_RULES)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
+        var printBatches = (await listStoreAll(STORE_LOCAL_PRINT_BATCHES)).filter(function(row: any) { return row.syncStatus === 'pending' || row.syncStatus === 'failed'; });
 
         var envelopes = [] as any[];
         historyRows.forEach(function(row: any) {
@@ -1401,6 +2098,12 @@
         });
         [[deliverySettings,'DELIVERY_SETTINGS','id'],[deliveryDrivers,'DELIVERY_DRIVER','driverId'],[driverShifts,'DRIVER_SHIFT','driverShiftId'],[settlements,'DRIVER_SETTLEMENT','settlementId'],[deliveryEvents,'DELIVERY_EVENT','deliveryEventId']].forEach(function(group:any) {
           group[0].forEach(function(row:any) { envelopes.push({ recordId: row[group[2]], recordType: group[1], merchantId: getMerchantId(), stationId: getStationNumber(), schemaVersion: 4, payload: row, idempotencyKey: row[group[2]], createdAt: row.createdAt, updatedAt: row.updatedAt || row.createdAt }); });
+        });
+        [[printerSettings,'PRINTER_SETTINGS','id'],[printJobRefs,'PRINT_JOB_REF','id']].forEach(function(group:any) {
+          group[0].forEach(function(row:any) { envelopes.push({ recordId: row[group[2]], recordType: group[1], merchantId: getMerchantId(), stationId: getStationNumber(), schemaVersion: 5, payload: row, idempotencyKey: row.idempotencyKey || row[group[2]], createdAt: row.createdAt || row.requestedAt, updatedAt: row.updatedAt || row.lastStatusAt || row.createdAt }); });
+        });
+        [[posPrinters,'POS_PRINTER_CONFIG','id'],[routingRules,'PRINTER_ROUTING_RULE','id'],[printBatches,'LOCAL_PRINT_BATCH','id']].forEach(function(group:any) {
+          group[0].forEach(function(row:any) { envelopes.push({ recordId: row[group[2]], recordType: group[1], merchantId: getMerchantId(), stationId: getStationNumber(), schemaVersion: 6, payload: row, idempotencyKey: row[group[2]], createdAt: row.createdAt || row.requestedAt, updatedAt: row.updatedAt || row.createdAt }); });
         });
         envelopes.sort(function(a: any, b: any) {
           return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
@@ -1862,7 +2565,7 @@
         return {
           dbName: dbName,
           dbVersion: dbVersion,
-          stores: [STORE_KV, STORE_META, STORE_ORDER_HISTORY, STORE_ORDER_HISTORY_ITEMS, STORE_ORDER_EVENTS, STORE_PAYMENT_HISTORY, STORE_SPLIT_PAYMENT_PLAN, STORE_SPLIT_PAYMENT_PORTION, STORE_DELIVERY_SETTINGS, STORE_DELIVERY_DRIVERS, STORE_DRIVER_SHIFTS, STORE_DRIVER_SETTLEMENTS, STORE_DELIVERY_EVENTS],
+          stores: [STORE_KV, STORE_META, STORE_ORDER_HISTORY, STORE_ORDER_HISTORY_ITEMS, STORE_ORDER_EVENTS, STORE_PAYMENT_HISTORY, STORE_SPLIT_PAYMENT_PLAN, STORE_SPLIT_PAYMENT_PORTION, STORE_DELIVERY_SETTINGS, STORE_DELIVERY_DRIVERS, STORE_DRIVER_SHIFTS, STORE_DRIVER_SETTLEMENTS, STORE_DELIVERY_EVENTS, STORE_PRINTER_SETTINGS, STORE_PRINT_JOB_REFS, STORE_POS_PRINTER_CONFIGS, STORE_PRINTER_ROUTING_RULES, STORE_LOCAL_PRINT_BATCHES],
           legacyOrdersKey: legacyOrdersKey,
           migrationMetaKey: LEGACY_IMPORT_META_KEY
         };
