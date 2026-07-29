@@ -1,5 +1,6 @@
 /// <reference path="./printer-types.ts" />
 /// <reference path="./escpos-builder.ts" />
+/// <reference path="./printer-profile-registry.ts" />
 
 (function(global: any) {
   'use strict';
@@ -63,6 +64,56 @@
     return type;
   }
 
+  function toPaperWidth(value: any): LilPosPaperWidth {
+    var raw = String(value || '').trim();
+    if (raw === '58mm') return '58mm';
+    if (raw === '76mm') return '76mm';
+    return '80mm';
+  }
+
+  function resolvePrinterContext(input: any): any {
+    var sourcePrinter = (input && (input.printerConfig || input.printer)) || {};
+    var profileId = global.LilposPrinterProfiles && global.LilposPrinterProfiles.normalizeProfileId
+      ? global.LilposPrinterProfiles.normalizeProfileId(sourcePrinter.profile || input && input.settings && input.settings.receiptPrinterProfile)
+      : String(sourcePrinter.profile || input && input.settings && input.settings.receiptPrinterProfile || 'generic_escpos_thermal');
+
+    var baseCaps = global.LilposPrinterProfiles && global.LilposPrinterProfiles.resolveProfileCapabilities
+      ? global.LilposPrinterProfiles.resolveProfileCapabilities(profileId)
+      : {
+          id: 'generic_escpos_thermal',
+          label: 'Generic ESC/POS Thermal',
+          technology: 'thermal',
+          supportsFontA: true,
+          supportsFontB: true,
+          supportsDoubleWidth: true,
+          supportsDoubleHeight: true,
+          supportsBold: true,
+          supportsUnderline: true,
+          supportsReverse: true,
+          supportsCut: true,
+          supportsDrawerPulse: true,
+          supportsRasterLogo: true,
+          defaultPaperWidth: '80mm',
+          defaultCharactersPerLine: 48
+        };
+
+    var effectiveCaps = global.LilposPrinterProfiles && global.LilposPrinterProfiles.applyCapabilityOverrides
+      ? global.LilposPrinterProfiles.applyCapabilityOverrides(baseCaps, {
+          cutterInstalled: sourcePrinter.cutterInstalledOverride,
+          cashDrawerConnected: sourcePrinter.cashDrawerConnectedOverride,
+          rasterImageSupport: sourcePrinter.rasterImageSupportOverride
+        })
+      : baseCaps;
+
+    return {
+      profileId: profileId,
+      profileLabel: String(baseCaps.label || profileId),
+      capabilities: effectiveCaps,
+      paperWidth: toPaperWidth(sourcePrinter.paperWidth || (input && input.settings && input.settings.paperWidth) || baseCaps.defaultPaperWidth),
+      charactersPerLine: Math.max(20, Number(sourcePrinter.charactersPerLine || (input && input.settings && input.settings.charactersPerLine) || baseCaps.defaultCharactersPerLine || 48))
+    };
+  }
+
   function lineItemsFromOrder(order: any): any[] {
     var rows = Array.isArray(order && order.lines) ? order.lines : [];
     return rows.map(function(line: any) {
@@ -88,8 +139,9 @@
       : (input && input.settings || {});
     var order = input && input.order || {};
     var isReprint = input && input.isReprint === true;
-    var width = Math.max(20, Number(settings.charactersPerLine || (settings.paperWidth === '58mm' ? 32 : 48)));
-    var builder = global.LilposEscposBuilder.createEscposBuilder();
+    var printerContext = resolvePrinterContext(input || {});
+    var width = Math.max(20, Number(printerContext.charactersPerLine || settings.charactersPerLine || (settings.paperWidth === '58mm' ? 32 : 48)));
+    var builder = global.LilposEscposBuilder.createEscposBuilder({ capabilities: printerContext.capabilities });
 
     builder.init().font(settings.fontFamilyMode || 'font_a').alignCenter();
 
@@ -206,15 +258,17 @@
       });
     }
 
-    builder.feed(Math.max(0, Number(settings.feedLinesBeforeCut || 0)));
-
-    if (settings.cutPaperAfterReceipt) builder.cut();
-    if (settings.openCashDrawerWithCashSale && input && input.allowDrawerPulse === true) builder.openDrawerPulse();
+    var linesBeforeCut = Math.max(0, Number(settings.feedLinesBeforeCut || 0));
+    if (linesBeforeCut > 0) builder.feed(linesBeforeCut);
+    if (settings.cutPaperAfterReceipt && printerContext.capabilities.supportsCut) builder.cut();
+    if (settings.openCashDrawerWithCashSale && input && input.allowDrawerPulse === true && printerContext.capabilities.supportsDrawerPulse) builder.openDrawerPulse();
 
     return {
       base64: builder.base64(),
       bytes: builder.bytes(),
-      width: width
+      width: width,
+      profileId: printerContext.profileId,
+      profileTechnology: printerContext.capabilities.technology
     };
   }
 
@@ -223,31 +277,37 @@
       ? global.LilposPrinterSettingsService.normalize(input && input.settings || {})
       : (input && input.settings || {});
     var printer = input && input.printer || {};
-    var width = Math.max(20, Number(settings.charactersPerLine || (settings.paperWidth === '58mm' ? 32 : 48)));
-    var builder = global.LilposEscposBuilder.createEscposBuilder();
+    var printerContext = resolvePrinterContext(input || {});
+    var width = Math.max(20, Number(printerContext.charactersPerLine || settings.charactersPerLine || (settings.paperWidth === '58mm' ? 32 : 48)));
+    var builder = global.LilposEscposBuilder.createEscposBuilder({ capabilities: printerContext.capabilities });
 
     builder.init().alignCenter().boldOn().line('LilPOS Printer Test').boldOff().feed(1).alignLeft();
     builder.line('Printer: ' + String(printer.name || 'Unknown'));
     builder.line('ID: ' + String(printer.id || ''));
     builder.line('Endpoint: ' + String(printer.ip || '') + ':' + String(printer.port || 9100));
-    builder.line('Paper: ' + String(settings.paperWidth || '80mm') + ' (' + width + ' cpl)');
+    builder.line('Profile: ' + String(printerContext.profileLabel || printerContext.profileId));
+    builder.line('Technology: ' + String(printerContext.capabilities.technology || 'thermal'));
+    builder.line('Paper: ' + String(printerContext.paperWidth || settings.paperWidth || '80mm') + ' (' + width + ' cpl)');
     builder.hr(width);
     builder.font('font_a').line('Font A sample');
-    builder.font('font_b').line('Font B sample');
+    if (printerContext.capabilities.supportsFontB) builder.font('font_b').line('Font B sample');
     builder.font(settings.fontFamilyMode || 'font_a');
-    builder.boldOn().line('Bold sample').boldOff();
-    builder.size('double_height').line('Double Height').size('normal');
-    builder.size('double_width').line('Double Width').size('normal');
+    if (printerContext.capabilities.supportsBold) builder.boldOn().line('Bold sample').boldOff();
+    if (printerContext.capabilities.supportsDoubleHeight) builder.size('double_height').line('Double Height').size('normal');
+    if (printerContext.capabilities.supportsDoubleWidth) builder.size('double_width').line('Double Width').size('normal');
     builder.alignCenter().line('Centered text');
     builder.alignLeft().twoCol('Left/Right test', '$12.34', width);
     builder.line('Date: ' + new Date().toISOString());
-    builder.feed(Math.max(0, Number(settings.feedLinesBeforeCut || 0)));
-    if (settings.cutPaperAfterReceipt) builder.cut();
+    var testLinesBeforeCut = Math.max(0, Number(settings.feedLinesBeforeCut || 0));
+    if (testLinesBeforeCut > 0) builder.feed(testLinesBeforeCut);
+    if (settings.cutPaperAfterReceipt && printerContext.capabilities.supportsCut) builder.cut();
 
     return {
       base64: builder.base64(),
       bytes: builder.bytes(),
-      width: width
+      width: width,
+      profileId: printerContext.profileId,
+      profileTechnology: printerContext.capabilities.technology
     };
   }
 

@@ -123,23 +123,41 @@ function displayOrderMeta(input: PaymentPaneInput): string {
   return `Order ${displayOrderNumber(input.displayOrderNumber)} • ${input.orderTypeLabel} • ${input.stationName}`;
 }
 
+function cardChargeBreakdown(state: PaymentPaneState): { baseAmountCents: number; tipAmountCents: number; amountToChargeCents: number } {
+  const math = window.LilposPaymentMath;
+  if (math?.computeCardChargeBreakdownCents) {
+    return math.computeCardChargeBreakdownCents(
+      Number(state.remainingBalanceCents || 0),
+      Number(state.cardTipAmountCents || 0),
+      Number(state.splitProcessingAmountCents || 0)
+    );
+  }
+  const baseAmountCents = state.splitProcessingAmountCents > 0
+    ? Math.max(0, Number(state.splitProcessingAmountCents || 0))
+    : Math.max(0, Number(state.remainingBalanceCents || 0));
+  const tipAmountCents = Math.max(0, Number(state.cardTipAmountCents || 0));
+  return {
+    baseAmountCents,
+    tipAmountCents,
+    amountToChargeCents: baseAmountCents + tipAmountCents
+  };
+}
+
 function displayBalanceDueCents(state: PaymentPaneState): number {
   if (state.selectedPaymentMethod === 'card') {
-    const baseCents = state.splitProcessingAmountCents > 0
-      ? Math.max(0, Number(state.splitProcessingAmountCents || 0))
-      : Math.max(0, Number(state.remainingBalanceCents || 0));
-    return baseCents + Math.max(0, Number(state.cardTipAmountCents || 0));
+    return cardChargeBreakdown(state).amountToChargeCents;
   }
   return Math.max(0, Number(state.remainingBalanceCents || 0));
 }
 
 function cardModeTipSummaryHtml(state: PaymentPaneState): string {
   if (state.selectedPaymentMethod !== 'card') return '';
-  const tipCents = Math.max(0, Number(state.cardTipAmountCents || 0));
+  const breakdown = cardChargeBreakdown(state);
   return `
-    <div class="lilpay-balance-tip-summary" aria-live="polite">
-      <span class="lilpay-balance-tip-label">Tip Amount</span>
-      <span class="lilpay-balance-tip-value">${formatCents(tipCents)}</span>
+    <div class="lilpay-balance-tip-summary lilpay-balance-card-breakdown" aria-live="polite">
+      <div class="lilpay-summary-row"><span>Balance Before Tip</span><b>${formatCents(breakdown.baseAmountCents)}</b></div>
+      <div class="lilpay-summary-row"><span>Tip</span><b>${formatCents(breakdown.tipAmountCents)}</b></div>
+      <div class="lilpay-summary-row lilpay-summary-total"><span>Amount to Charge</span><b>${formatCents(breakdown.amountToChargeCents)}</b></div>
     </div>
   `;
 }

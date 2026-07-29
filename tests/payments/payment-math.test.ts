@@ -5,6 +5,7 @@ declare const applyCurrencyDigitInput: (currentCents: number, digit: string) => 
 declare const applyCurrencyBackspace: (currentCents: number) => number;
 declare const buildCashQuickAmounts: (remainingBalanceCents: number) => number[];
 declare const computeChangeDueCents: (cashReceivedCents: number, remainingBalanceCents: number) => number;
+declare const computeCardChargeBreakdownCents: (remainingBalanceCents: number, cardTipAmountCents: number, splitProcessingAmountCents?: number) => { baseAmountCents: number; tipAmountCents: number; amountToChargeCents: number };
 declare const computeRemainingBalanceCents: (totalCents: number, paymentsAppliedCents: number) => number;
 declare const formatCents: (cents: number) => string;
 
@@ -46,5 +47,18 @@ describe('payment math', () => {
     expect(buildCashQuickAmounts(425)).toEqual([500, 1000, 2000, 2500, 3000, 4000, 5000, 10000]);
     expect(buildCashQuickAmounts(9910)).toEqual([10000]);
     expect(buildCashQuickAmounts(10000)).toEqual([10000]);
+  });
+
+  it('computes card charge totals including tip for full and split payments', () => {
+    expect(computeCardChargeBreakdownCents(2705, 500)).toEqual({
+      baseAmountCents: 2705,
+      tipAmountCents: 500,
+      amountToChargeCents: 3205
+    });
+    expect(computeCardChargeBreakdownCents(2705, 200, 1000)).toEqual({
+      baseAmountCents: 1000,
+      tipAmountCents: 200,
+      amountToChargeCents: 1200
+    });
   });
 });

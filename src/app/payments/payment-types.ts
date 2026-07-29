@@ -165,6 +165,26 @@ type PaymentPaneCallbacks = {
 };
 
 interface Window {
+  LilposPaymentMath: {
+    clampToCents: (value: number) => number;
+    formatCents: (cents: number) => string;
+    formatWholeDollarCents: (cents: number) => string;
+    toCents: (amount: number) => number;
+    parseMoneyInputToCents: (displayValue: string) => number;
+    normalizePhoneDigits: (value: string) => string;
+    formatPhoneDigits: (value: string) => string;
+    applyCurrencyDigitInput: (currentCents: number, digit: string) => number;
+    applyCurrencyBackspace: (currentCents: number) => number;
+    displayOrderNumber: (orderNumber: string) => string;
+    computeRemainingBalanceCents: (totalCents: number, paymentsAppliedCents: number) => number;
+    computeChangeDueCents: (cashReceivedCents: number, remainingBalanceCents: number) => number;
+    computeCardChargeBreakdownCents: (remainingBalanceCents: number, cardTipAmountCents: number, splitProcessingAmountCents?: number) => {
+      baseAmountCents: number;
+      tipAmountCents: number;
+      amountToChargeCents: number;
+    };
+    buildCashQuickAmounts: (remainingBalanceCents: number) => number[];
+  };
   LilposPaymentPane: {
     createStateFromInput: (input: PaymentPaneInput) => PaymentPaneState;
     renderPane: (input: PaymentPaneInput, state: PaymentPaneState) => string;

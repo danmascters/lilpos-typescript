@@ -2,6 +2,15 @@ type LilPrintJobPayloadType = 'epos_xml' | 'escpos_raw_base64' | 'plain_text';
 
 type LilPrintTransport = 'tcp_9100';
 
+type PrinterConnectionTypeId =
+  | 'network_printer'
+  | 'android_quickprinter'
+  | 'bluetooth_escpos'
+  | 'windows_printer'
+  | 'usb_serial';
+
+type PrinterPrintModeId = 'raw_escpos' | 'epson_epos_xml' | 'android_quickprinter_intent';
+
 type LilPrintPriority = 'low' | 'normal' | 'high';
 
 type LilPrintJobStatus =
@@ -15,7 +24,41 @@ type LilPrintJobStatus =
 
 type LilPrintConnectionState = 'connected' | 'disconnected' | 'degraded';
 
-type LilPosPaperWidth = '58mm' | '80mm';
+type LilPosPaperWidth = '58mm' | '76mm' | '80mm';
+
+type PrinterProfileCapabilities = {
+  id: string;
+  label: string;
+  description?: string;
+  technology: 'thermal' | 'impact';
+  supportsFontA: boolean;
+  supportsFontB: boolean;
+  supportsDoubleWidth: boolean;
+  supportsDoubleHeight: boolean;
+  supportsBold: boolean;
+  supportsUnderline: boolean;
+  supportsReverse: boolean;
+  supportsCut: boolean;
+  supportsDrawerPulse: boolean;
+  supportsRasterLogo: boolean;
+  defaultPaperWidth: LilPosPaperWidth;
+  defaultCharactersPerLine: number;
+};
+
+type PrinterConnectionTypeDefinition = {
+  id: PrinterConnectionTypeId;
+  label: string;
+  implemented: boolean;
+};
+
+type PrinterPrintModeDefinition = {
+  id: PrinterPrintModeId;
+  label: string;
+  connectionTypes: PrinterConnectionTypeId[];
+  implemented: boolean;
+  payloadType: LilPrintJobPayloadType;
+  transport?: LilPrintTransport;
+};
 
 type LilPosFontFamilyMode = 'font_a' | 'font_b';
 
@@ -70,6 +113,8 @@ type PosPrinterConfig = {
   secondaryRoles: string[];
   ip: string;
   port: number;
+  connectionType: PrinterConnectionTypeId;
+  printMode: PrinterPrintModeId;
   transport: LilPrintTransport;
   profile: string;
   paperWidth: LilPosPaperWidth;
@@ -79,6 +124,9 @@ type PosPrinterConfig = {
   maxAttempts: number;
   cutPaper: boolean;
   cashDrawerConnected: boolean;
+  cutterInstalledOverride?: boolean | null;
+  cashDrawerConnectedOverride?: boolean | null;
+  rasterImageSupportOverride?: boolean | null;
   routeLabels?: string[];
   disabledAt?: string;
   createdAt: string;
@@ -161,6 +209,7 @@ type PrinterSettingsRecord = {
   autoPrintReceiptAfterSale: boolean;
   defaultReceiptPrinterId?: string;
   defaultKitchenPrinterId?: string;
+  cashDrawerPrinterId?: string;
   receiptPrinterId?: string;
   receiptPrinterName?: string;
   receiptPrinterIp?: string;
@@ -235,8 +284,8 @@ type LocalPrintJobReference = {
   batchId?: string;
   printJobId: string;
   idempotencyKey: string;
-  jobType: 'customer_receipt' | 'printer_test';
-  printerRole: 'receipt';
+  jobType: 'customer_receipt' | 'customer_receipt_copy' | 'printer_test';
+  printerRole: 'receipt' | 'station_printer';
   printerId: string;
   requestedAt: string;
   lastKnownStatus: LilPrintJobStatus;
@@ -281,6 +330,8 @@ type LilPrintRequestPrinter = {
   ip: string;
   port: number;
   profile?: string;
+  connectionType?: PrinterConnectionTypeId;
+  printMode?: PrinterPrintModeId;
   transport: LilPrintTransport;
 };
 
@@ -300,9 +351,10 @@ type LilPrintJobCreateRequest = {
     batchId?: string;
     stationId: string;
     businessDayId: string;
-    jobType: 'customer_receipt' | 'printer_test';
-    printerRole: 'receipt';
+    jobType: 'customer_receipt' | 'customer_receipt_copy' | 'printer_test';
+    printerRole: 'receipt' | 'station_printer';
     source: 'lilpos';
+    requestedFrom?: 'existing_order' | 'order_number_dialog' | 'sale_completed' | string;
     isReprint: boolean;
     originalPrintJobId?: string;
   };
@@ -320,4 +372,23 @@ type LilPrintApiResponse<T> = {
   data: T | null;
   errorMessage: string;
   requestId: string;
+  errorCode?: string;
+  errorRetryable?: boolean;
 };
+
+type WorkstationPrinterAssignment = {
+  id: string;
+  merchantId: string;
+  locationId: string;
+  stationId: string;
+  stationPrinterId?: string;
+  cashDrawerPrinterId?: string;
+  printVoidSlips: boolean;
+  printEdits: boolean;
+  printResends: boolean;
+  createdAt: string;
+  updatedAt: string;
+  syncStatus?: LilPosSyncStatus;
+};
+
+type StationSlipType = 'void_slip' | 'edit_slip' | 'resend_slip';

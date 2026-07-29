@@ -64,6 +64,21 @@ function computeChangeDueCents(cashReceivedCents: number, remainingBalanceCents:
   return Math.max(clampToCents(cashReceivedCents) - clampToCents(remainingBalanceCents), 0);
 }
 
+function computeCardChargeBreakdownCents(
+  remainingBalanceCents: number,
+  cardTipAmountCents: number,
+  splitProcessingAmountCents: number = 0
+): { baseAmountCents: number; tipAmountCents: number; amountToChargeCents: number } {
+  const splitAmount = clampToCents(splitProcessingAmountCents);
+  const baseAmountCents = splitAmount > 0 ? splitAmount : clampToCents(remainingBalanceCents);
+  const tipAmountCents = clampToCents(cardTipAmountCents);
+  return {
+    baseAmountCents,
+    tipAmountCents,
+    amountToChargeCents: baseAmountCents + tipAmountCents
+  };
+}
+
 function buildCashQuickAmounts(remainingBalanceCents: number): number[] {
   const remaining = clampToCents(remainingBalanceCents);
   if (remaining <= 0) return [];
@@ -87,3 +102,20 @@ function buildCashQuickAmounts(remainingBalanceCents: number): number[] {
 
   return options;
 }
+
+window.LilposPaymentMath = {
+  clampToCents,
+  formatCents,
+  formatWholeDollarCents,
+  toCents,
+  parseMoneyInputToCents,
+  normalizePhoneDigits,
+  formatPhoneDigits,
+  applyCurrencyDigitInput,
+  applyCurrencyBackspace,
+  displayOrderNumber,
+  computeRemainingBalanceCents,
+  computeChangeDueCents,
+  computeCardChargeBreakdownCents,
+  buildCashQuickAmounts
+};

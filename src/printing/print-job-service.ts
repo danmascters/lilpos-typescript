@@ -3,6 +3,7 @@
 /// <reference path="./lilprint-client.ts" />
 /// <reference path="./receipt-renderer.ts" />
 /// <reference path="./printer-routing-engine.ts" />
+/// <reference path="./printer-profile-registry.ts" />
 
 (function(global: any) {
   'use strict';
@@ -76,19 +77,76 @@
     ].join(':');
   }
 
+  function buildReceiptCopyIdempotencyKey(context: any): string {
+    return [
+      'lilpos',
+      context.merchantId,
+      context.locationId,
+      context.orderId,
+      'receipt_copy',
+      context.stationId,
+      context.uniquePrintActionId
+    ].join(':');
+  }
+
   function buildJobId(idempotencyKey: string): string {
     return 'lilpos_job_' + stableHash(idempotencyKey);
   }
 
   function printerRequestFromConfig(printer: any): LilPrintRequestPrinter {
+    var connectionType = global.LilposPrinterProfiles && global.LilposPrinterProfiles.normalizeConnectionTypeId
+      ? global.LilposPrinterProfiles.normalizeConnectionTypeId(printer && printer.connectionType)
+      : 'network_printer';
+    var printMode = global.LilposPrinterProfiles && global.LilposPrinterProfiles.normalizePrintModeId
+      ? global.LilposPrinterProfiles.normalizePrintModeId(printer && printer.printMode, connectionType)
+      : 'raw_escpos';
+    var transport = global.LilposPrinterProfiles && global.LilposPrinterProfiles.effectiveTransport
+      ? global.LilposPrinterProfiles.effectiveTransport(connectionType, printMode)
+      : 'tcp_9100';
     return {
       id: String(printer && printer.id || ''),
       name: String(printer && printer.name || 'Printer'),
       ip: String(printer && printer.ip || '127.0.0.1'),
       port: Number(printer && printer.port || 9100),
-      profile: String(printer && printer.profile || 'generic_escpos'),
-      transport: 'tcp_9100'
+      profile: String(printer && printer.profile || 'generic_escpos_thermal'),
+      connectionType: connectionType,
+      printMode: printMode,
+      transport: transport
     };
+  }
+
+  function resolvePayloadTypeForPrinter(printer: any): LilPrintJobPayloadType {
+    var connectionType = global.LilposPrinterProfiles && global.LilposPrinterProfiles.normalizeConnectionTypeId
+      ? global.LilposPrinterProfiles.normalizeConnectionTypeId(printer && printer.connectionType)
+      : 'network_printer';
+    var mode = global.LilposPrinterProfiles && global.LilposPrinterProfiles.resolvePrintMode
+      ? global.LilposPrinterProfiles.resolvePrintMode(printer && printer.printMode, connectionType)
+      : { id: 'raw_escpos', payloadType: 'escpos_raw_base64', implemented: true };
+    if (mode && mode.implemented === true) return mode.payloadType || 'escpos_raw_base64';
+    return 'escpos_raw_base64';
+  }
+
+  function canPrintWithConfig(printer: any): { ok: boolean; message?: string } {
+    var connectionType = global.LilposPrinterProfiles && global.LilposPrinterProfiles.normalizeConnectionTypeId
+      ? global.LilposPrinterProfiles.normalizeConnectionTypeId(printer && printer.connectionType)
+      : 'network_printer';
+    var printMode = global.LilposPrinterProfiles && global.LilposPrinterProfiles.normalizePrintModeId
+      ? global.LilposPrinterProfiles.normalizePrintModeId(printer && printer.printMode, connectionType)
+      : 'raw_escpos';
+    var connectionSupported = global.LilposPrinterProfiles && global.LilposPrinterProfiles.supportsConnectionType
+      ? global.LilposPrinterProfiles.supportsConnectionType(connectionType)
+      : connectionType === 'network_printer';
+    var modeSupported = global.LilposPrinterProfiles && global.LilposPrinterProfiles.supportsPrintMode
+      ? global.LilposPrinterProfiles.supportsPrintMode(printMode, connectionType)
+      : printMode === 'raw_escpos';
+
+    if (!connectionSupported) {
+      return { ok: false, message: 'Selected connection type is not supported in this build.' };
+    }
+    if (!modeSupported) {
+      return { ok: false, message: 'Selected print mode is not supported in this build.' };
+    }
+    return { ok: true };
   }
 
   function createPrintJobService(input?: any) {
@@ -205,19 +263,53 @@
 
       var isReprint = inputReceipt && inputReceipt.isReprint === true;
       var reprintId = String(inputReceipt && inputReceipt.reprintId || ('r' + Date.now()));
+      var requestedFrom = String(inputReceipt && inputReceipt.requestedFrom || '').trim() || (isReprint ? 'order_number_dialog' : 'sale_completed');
+      var requestedFromExistingOrder = requestedFrom === 'existing_order';
+      var explicitStationPrinterId = String(inputReceipt && (inputReceipt.forceStationPrinterId || inputReceipt.stationPrinterId) || '').trim();
+      var uniquePrintActionId = String(inputReceipt && inputReceipt.uniquePrintActionId || reprintId || ('copy_' + Date.now()));
 
       var discoveryResult = await discoverClient(settings);
       if (!discoveryResult.ok) {
         return { ok: false, message: 'LilPrint Agent is not available.', discovery: discoveryResult.discovery };
       }
 
-      var destinations = await resolveDestinations({
-        order: order,
-        trigger: isReprint ? 'manual_print' : 'sale_completed',
-        merchantId: merchantId,
-        locationId: locationId,
-        settings: settings
-      });
+      var destinations: any[] = [];
+      if (requestedFromExistingOrder || explicitStationPrinterId) {
+        var stationPrinterId = explicitStationPrinterId;
+        if (!stationPrinterId && dataService && typeof dataService.resolveStationPrinter === 'function') {
+          var resolved = await dataService.resolveStationPrinter({
+            merchantId: merchantId,
+            locationId: locationId,
+            stationId: stationId
+          });
+          stationPrinterId = String(resolved && resolved.id || '');
+        }
+        if (!stationPrinterId) {
+          return { ok: false, message: 'No Station Printer is assigned to this workstation.' };
+        }
+        destinations = [{
+          ruleId: 'station_printer_assignment',
+          printerId: stationPrinterId,
+          ticketType: 'customer_receipt',
+          matchedLineIds: [],
+          ticketContentMode: 'full',
+          copies: Math.max(1, Number(inputReceipt && inputReceipt.copies || 1)),
+          priority: (inputReceipt && inputReceipt.priority) || 'normal',
+          required: true,
+          includeCustomerName: true,
+          includeCustomerPhone: true,
+          includeDeliveryAddress: true,
+          includeCustomerNotes: true
+        }];
+      } else {
+        destinations = await resolveDestinations({
+          order: order,
+          trigger: isReprint ? 'manual_print' : 'sale_completed',
+          merchantId: merchantId,
+          locationId: locationId,
+          settings: settings
+        });
+      }
 
       if (!destinations.length) {
         return { ok: false, message: 'No matching receipt destination rule was found.' };
@@ -248,7 +340,20 @@
         }
 
         var ticketType = String(destination.ticketType || 'customer_receipt');
-        var idempotencyKey = isReprint
+        var printability = canPrintWithConfig(printerConfig);
+        if (!printability.ok) {
+          jobs.push({ ok: false, printerId: String(destination.printerId || ''), message: printability.message || 'Printer configuration is not supported.' });
+          continue;
+        }
+        var idempotencyKey = requestedFromExistingOrder
+          ? buildReceiptCopyIdempotencyKey({
+              merchantId: merchantId,
+              locationId: locationId,
+              orderId: orderId,
+              stationId: stationId,
+              uniquePrintActionId: uniquePrintActionId
+            })
+          : isReprint
           ? buildReprintIdempotencyKey({ merchantId: merchantId, locationId: locationId, orderId: orderId, ticketType: ticketType, printerId: printerConfig.id, reprintId: reprintId })
           : buildOriginalIdempotencyKey({ merchantId: merchantId, locationId: locationId, orderId: orderId, ticketType: ticketType, printerId: printerConfig.id });
 
@@ -264,6 +369,7 @@
             copies: Number(destination.copies || printerConfig.defaultCopies || settings.copies || 1),
             priority: destination.priority || settings.priority || 'normal'
           }),
+          printer: printerConfig,
           order: order,
           isReprint: isReprint,
           changeDue: Number(inputReceipt && inputReceipt.changeDue || 0),
@@ -278,15 +384,16 @@
           jobId: jobId,
           idempotencyKey: idempotencyKey,
           printer: printer,
-          payload: { type: 'escpos_raw_base64', data: rendered.base64 },
+          payload: { type: resolvePayloadTypeForPrinter(printerConfig), data: rendered.base64 },
           metadata: {
             orderId: orderId,
             batchId: String(batch && batch.id || inputReceipt && inputReceipt.batchId || ''),
             stationId: stationId,
             businessDayId: businessDayId,
-            jobType: ticketType === 'customer_receipt' ? 'customer_receipt' : 'printer_test',
-            printerRole: String(printerConfig.primaryRole || 'receipt') as any,
+            jobType: requestedFromExistingOrder ? 'customer_receipt_copy' : (ticketType === 'customer_receipt' ? 'customer_receipt' : 'printer_test'),
+            printerRole: requestedFromExistingOrder ? 'station_printer' : String(printerConfig.primaryRole || 'receipt') as any,
             source: 'lilpos',
+            requestedFrom: requestedFrom,
             isReprint: isReprint,
             originalPrintJobId: String(inputReceipt && inputReceipt.originalPrintJobId || '')
           },
@@ -304,8 +411,8 @@
           batchId: String(batch && batch.id || inputReceipt && inputReceipt.batchId || ''),
           printJobId: jobId,
           idempotencyKey: idempotencyKey,
-          jobType: ticketType === 'customer_receipt' ? 'customer_receipt' : 'printer_test',
-          printerRole: String(printerConfig.primaryRole || 'receipt'),
+          jobType: requestedFromExistingOrder ? 'customer_receipt_copy' : (ticketType === 'customer_receipt' ? 'customer_receipt' : 'printer_test'),
+          printerRole: requestedFromExistingOrder ? 'station_printer' : String(printerConfig.primaryRole || 'receipt'),
           printerId: String(printer.id),
           requestedAt: nowIso(),
           lastKnownStatus: 'QUEUED',
@@ -408,6 +515,9 @@
       var printerConfig = allPrinters.find(function(printer: any) { return String(printer.id) === preferredPrinterId; }) || allPrinters[0] || null;
       if (!printerConfig) return { ok: false, message: 'No printer is configured for test printing.' };
 
+      var printability = canPrintWithConfig(printerConfig);
+      if (!printability.ok) return { ok: false, message: printability.message || 'Printer configuration is not supported.' };
+
       var merchantId = String((dataService && dataService.getMerchantId && dataService.getMerchantId()) || settings.merchantId || 'local-merchant');
       var locationId = String((dataService && dataService.getLocationId && dataService.getLocationId()) || settings.locationId || 'local-location');
       var stationId = String((dataService && dataService.getStationNumber && dataService.getStationNumber()) || settings.stationId || '1');
@@ -422,6 +532,7 @@
           paperWidth: printerConfig.paperWidth,
           charactersPerLine: printerConfig.charactersPerLine
         }),
+        printerConfig: printerConfig,
         printer: printer
       });
 
@@ -432,7 +543,7 @@
         jobId: jobId,
         idempotencyKey: idempotencyKey,
         printer: printer,
-        payload: { type: 'escpos_raw_base64', data: rendered.base64 },
+        payload: { type: resolvePayloadTypeForPrinter(printerConfig), data: rendered.base64 },
         metadata: {
           orderId: 'printer_test',
           batchId: '',
@@ -441,6 +552,7 @@
           jobType: 'printer_test',
           printerRole: String(printerConfig.primaryRole || 'receipt') as any,
           source: 'lilpos',
+          requestedFrom: 'printer_settings',
           isReprint: false
         },
         options: {
@@ -451,16 +563,50 @@
         }
       };
 
+      var localRef = await persistJobReference({
+        orderId: 'printer_test',
+        batchId: '',
+        printJobId: jobId,
+        idempotencyKey: idempotencyKey,
+        jobType: 'printer_test',
+        printerRole: String(printerConfig.primaryRole || 'receipt'),
+        printerId: String(printer.id),
+        requestedAt: nowIso(),
+        lastKnownStatus: 'QUEUED',
+        lastStatusAt: nowIso(),
+        isReprint: false
+      });
+
       var submitted = await submitJob(request, { client: discoveryResult.client });
-      if (!submitted.ok) return { ok: false, message: submitted.errorMessage || 'Unable to submit test receipt.' };
+      if (!submitted.ok) {
+        if (localRef && localRef.id) {
+          await updateJobReference(localRef.id, {
+            lastKnownStatus: 'FAILED_FINAL',
+            lastStatusAt: nowIso(),
+            lastErrorMessage: submitted.errorMessage || 'Unable to submit test receipt.'
+          });
+        }
+        return { ok: false, message: submitted.errorMessage || 'Unable to submit test receipt.' };
+      }
+
+      var status = normalizeStatus(submitted.remote && submitted.remote.status || 'QUEUED');
+      if (localRef && localRef.id) {
+        await updateJobReference(localRef.id, {
+          lastKnownStatus: status,
+          lastStatusAt: nowIso(),
+          lastErrorMessage: ''
+        });
+      }
 
       return {
         ok: true,
         printJobId: jobId,
-        status: normalizeStatus(submitted.remote && submitted.remote.status || 'QUEUED'),
+        status: status,
         requestId: submitted.requestId || '',
         message: 'Test receipt queued.',
-        printerId: printer.id
+        printerId: printer.id,
+        localRef: localRef,
+        baseUrl: discoveryResult.discovery.baseUrl
       };
     }
 

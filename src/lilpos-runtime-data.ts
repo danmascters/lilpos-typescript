@@ -86,7 +86,7 @@
     var getFallbackCustomers = safeDeps.getFallbackCustomers || function() { return []; };
     var nowIso = safeDeps.nowIso || function() { return new Date().toISOString(); };
     var dbName = safeDeps.dbName || 'BringdatSmartRegisterMockNoNpm';
-    var dbVersion = Number.isFinite(Number(safeDeps.dbVersion)) ? Number(safeDeps.dbVersion) : 6;
+    var dbVersion = Number.isFinite(Number(safeDeps.dbVersion)) ? Number(safeDeps.dbVersion) : 7;
     var legacyOrdersKey = safeDeps.legacyOrdersKey || 'lilpos_persisted_orders';
     var getStationNumber = safeDeps.getStationNumber || function() { return 1; };
     var getMerchantId = safeDeps.getMerchantId || function() { return 'local-merchant'; };
@@ -111,11 +111,13 @@
     var STORE_POS_PRINTER_CONFIGS = 'pos_printer_configs';
     var STORE_PRINTER_ROUTING_RULES = 'printer_routing_rules';
     var STORE_LOCAL_PRINT_BATCHES = 'local_print_batches';
+    var STORE_WORKSTATION_PRINTER_ASSIGNMENTS = 'workstation_printer_assignments';
 
     var LEGACY_IMPORT_META_KEY = 'legacy_order_import_v1';
     var ORDERS_MANAGEMENT_VIEW_PREFS_KEY = 'orders_management_view_preferences_v1';
     var PRINTER_SETTINGS_KEY = 'printer_settings_v1';
     var PRINTER_MIGRATION_META_KEY = 'printer_settings_migration_v2';
+    var WORKSTATION_PRINTER_ASSIGNMENT_KEY = 'workstation-printers';
 
     var historyBootPromise: Promise<any> | null = null;
 
@@ -217,10 +219,57 @@
       return Math.max(min, Math.min(max, Math.round(n)));
     }
 
+    function normalizePrinterConnectionType(value: any): string {
+      var raw = String(value || '').trim().toLowerCase();
+      if (raw === 'android_quickprinter' || raw === 'android') return 'android_quickprinter';
+      if (raw === 'bluetooth_escpos' || raw === 'bluetooth') return 'bluetooth_escpos';
+      if (raw === 'windows_printer' || raw === 'windows') return 'windows_printer';
+      if (raw === 'usb_serial' || raw === 'usb') return 'usb_serial';
+      return 'network_printer';
+    }
+
+    function normalizePrinterProfileId(value: any): string {
+      var raw = String(value || '').trim().toLowerCase();
+      if (!raw) return 'generic_escpos_thermal';
+      if (raw === 'generic_escpos' || raw === 'epson_escpos' || raw === 'epson_thermal') return 'generic_escpos_thermal';
+      if (raw === 'tm_u220' || raw === 'u220' || raw === 'epson_u220') return 'epson_tm_u220';
+      if (raw === 'star_tsp100') return 'star_escpos';
+      if (raw === 'bixolon') return 'bixolon_escpos';
+      return raw;
+    }
+
+    function normalizePrinterPrintMode(mode: any, connectionType: any): string {
+      var rawMode = String(mode || '').trim().toLowerCase();
+      var normalizedConnectionType = normalizePrinterConnectionType(connectionType);
+      if (normalizedConnectionType === 'network_printer') {
+        return rawMode === 'epson_epos_xml' ? 'epson_epos_xml' : 'raw_escpos';
+      }
+      if (normalizedConnectionType === 'android_quickprinter') {
+        return 'android_quickprinter_intent';
+      }
+      return 'raw_escpos';
+    }
+
+    function normalizePrinterTransport(connectionType: any, printMode: any): LilPrintTransport {
+      var normalizedConnectionType = normalizePrinterConnectionType(connectionType);
+      var normalizedMode = normalizePrinterPrintMode(printMode, normalizedConnectionType);
+      if (normalizedConnectionType === 'network_printer' && normalizedMode === 'epson_epos_xml') return 'tcp_9100';
+      return 'tcp_9100';
+    }
+
+    function normalizeCapabilityOverride(value: any): boolean | null {
+      if (value === true) return true;
+      if (value === false) return false;
+      if (String(value || '').toLowerCase() === 'yes') return true;
+      if (String(value || '').toLowerCase() === 'no') return false;
+      return null;
+    }
+
     function normalizePrinterSettingsRecord(input: any): any {
       var source = input || {};
-      var paperWidth = String(source.paperWidth || '80mm') === '58mm' ? '58mm' : '80mm';
-      var defaultCpl = paperWidth === '58mm' ? 32 : 48;
+      var rawPaperWidth = String(source.paperWidth || '80mm');
+      var paperWidth = rawPaperWidth === '58mm' ? '58mm' : rawPaperWidth === '76mm' ? '76mm' : '80mm';
+      var defaultCpl = paperWidth === '58mm' ? 32 : paperWidth === '76mm' ? 40 : 48;
       var merchantId = String(source.merchantId || getMerchantId() || 'local-merchant');
       var locationId = String(source.locationId || getLocationId() || 'local-location');
       var stationId = source.stationId == null ? String(getStationNumber() || 1) : String(source.stationId || '');
@@ -243,11 +292,12 @@
         autoPrintReceiptAfterSale: source.autoPrintReceiptAfterSale === true,
         defaultReceiptPrinterId: source.defaultReceiptPrinterId ? String(source.defaultReceiptPrinterId) : '',
         defaultKitchenPrinterId: source.defaultKitchenPrinterId ? String(source.defaultKitchenPrinterId) : '',
+        cashDrawerPrinterId: source.cashDrawerPrinterId ? String(source.cashDrawerPrinterId) : '',
         receiptPrinterId: source.receiptPrinterId ? String(source.receiptPrinterId) : '',
         receiptPrinterName: source.receiptPrinterName ? String(source.receiptPrinterName) : '',
         receiptPrinterIp: source.receiptPrinterIp ? String(source.receiptPrinterIp) : '',
         receiptPrinterPort: printerPort,
-        receiptPrinterProfile: source.receiptPrinterProfile ? String(source.receiptPrinterProfile) : '',
+        receiptPrinterProfile: source.receiptPrinterProfile ? normalizePrinterProfileId(source.receiptPrinterProfile) : '',
         receiptPrinterTransport: 'tcp_9100',
         paperWidth: paperWidth,
         charactersPerLine: charsPerLine,
@@ -291,8 +341,12 @@
         feedLinesBeforeCut: clampNumber(source.feedLinesBeforeCut, 0, 10, 4),
         cutPaperAfterReceipt: source.cutPaperAfterReceipt !== false,
         openCashDrawerWithCashSale: source.openCashDrawerWithCashSale === true,
-        kitchenPaperWidth: String(source.kitchenPaperWidth || source.paperWidth || '80mm') === '58mm' ? '58mm' : '80mm',
-        kitchenCharactersPerLine: clampNumber(source.kitchenCharactersPerLine, 20, 64, paperWidth === '58mm' ? 32 : 48),
+        kitchenPaperWidth: String(source.kitchenPaperWidth || source.paperWidth || '80mm') === '58mm'
+          ? '58mm'
+          : String(source.kitchenPaperWidth || source.paperWidth || '80mm') === '76mm'
+          ? '76mm'
+          : '80mm',
+        kitchenCharactersPerLine: clampNumber(source.kitchenCharactersPerLine, 20, 64, defaultCpl),
         kitchenOrderNumberScale: String(source.kitchenOrderNumberScale || 'double_size'),
         kitchenItemTextScale: String(source.kitchenItemTextScale || 'normal'),
         kitchenModifierTextScale: String(source.kitchenModifierTextScale || 'normal'),
@@ -306,6 +360,42 @@
         retryEnabled: source.retryEnabled !== false,
         maxAttempts: clampNumber(source.maxAttempts, 1, 20, 5),
         migratedToMultiPrinterV2At: source.migratedToMultiPrinterV2At ? String(source.migratedToMultiPrinterV2At) : '',
+        createdAt: created,
+        updatedAt: stamp,
+        syncStatus: source.syncStatus ? String(source.syncStatus) : (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only')
+      };
+    }
+
+    function workstationPrinterAssignmentId(input: any): string {
+      var source = input || {};
+      var merchantId = String(source.merchantId || getMerchantId() || 'local-merchant');
+      var locationId = String(source.locationId || getLocationId() || 'local-location');
+      var stationId = String(source.stationId == null ? (getStationNumber() || 1) : source.stationId || '');
+      return [WORKSTATION_PRINTER_ASSIGNMENT_KEY, merchantId, locationId, stationId].join(':');
+    }
+
+    function normalizeWorkstationPrinterAssignmentRecord(input: any): any {
+      var source = input || {};
+      var merchantId = String(source.merchantId || getMerchantId() || 'local-merchant');
+      var locationId = String(source.locationId || getLocationId() || 'local-location');
+      var stationId = String(source.stationId == null ? (getStationNumber() || 1) : source.stationId || '');
+      var stamp = String(source.updatedAt || nowIso());
+      var created = String(source.createdAt || stamp);
+
+      return {
+        id: String(source.id || workstationPrinterAssignmentId({
+          merchantId: merchantId,
+          locationId: locationId,
+          stationId: stationId
+        })),
+        merchantId: merchantId,
+        locationId: locationId,
+        stationId: stationId,
+        stationPrinterId: source.stationPrinterId ? String(source.stationPrinterId) : '',
+        cashDrawerPrinterId: source.cashDrawerPrinterId ? String(source.cashDrawerPrinterId) : '',
+        printVoidSlips: source.printVoidSlips !== false,
+        printEdits: source.printEdits !== false,
+        printResends: source.printResends !== false,
         createdAt: created,
         updatedAt: stamp,
         syncStatus: source.syncStatus ? String(source.syncStatus) : (getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only')
@@ -342,6 +432,14 @@
       var stamp = String(source.updatedAt || nowIso());
       var created = String(source.createdAt || stamp);
       var id = normalizeStablePrinterId(source.id, source.name || source.description || source.primaryRole || 'printer');
+      var connectionType = normalizePrinterConnectionType(source.connectionType || source.transport);
+      var printMode = normalizePrinterPrintMode(source.printMode, connectionType);
+      var normalizedPaperWidth = String(source.paperWidth || '80mm') === '58mm'
+        ? '58mm'
+        : String(source.paperWidth || '80mm') === '76mm'
+        ? '76mm'
+        : '80mm';
+      var defaultCpl = normalizedPaperWidth === '58mm' ? 32 : normalizedPaperWidth === '76mm' ? 40 : 48;
       var primaryRole = String(source.primaryRole || 'receipt').toLowerCase();
       var allowedRoles = ['receipt', 'kitchen', 'pizza', 'expo', 'bar', 'delivery', 'label', 'cash_drawer', 'custom'];
       if (allowedRoles.indexOf(primaryRole) < 0) primaryRole = 'custom';
@@ -360,15 +458,20 @@
           : [],
         ip: String(source.ip || source.receiptPrinterIp || '').trim(),
         port: clampNumber(source.port != null ? source.port : source.receiptPrinterPort, 1, 65535, 9100),
-        transport: 'tcp_9100',
-        profile: String(source.profile || source.receiptPrinterProfile || 'generic_escpos'),
-        paperWidth: String(source.paperWidth || '80mm') === '58mm' ? '58mm' : '80mm',
-        charactersPerLine: clampNumber(source.charactersPerLine, 20, 64, String(source.paperWidth || '80mm') === '58mm' ? 32 : 48),
+        connectionType: connectionType,
+        printMode: printMode,
+        transport: normalizePrinterTransport(connectionType, printMode),
+        profile: normalizePrinterProfileId(source.profile || source.receiptPrinterProfile || 'generic_escpos_thermal'),
+        paperWidth: normalizedPaperWidth,
+        charactersPerLine: clampNumber(source.charactersPerLine, 20, 64, defaultCpl),
         defaultCopies: clampNumber(source.defaultCopies != null ? source.defaultCopies : source.copies, 1, 20, 1),
         retryEnabled: source.retryEnabled !== false,
         maxAttempts: clampNumber(source.maxAttempts, 1, 20, 5),
         cutPaper: source.cutPaper !== false,
         cashDrawerConnected: source.cashDrawerConnected === true,
+        cutterInstalledOverride: normalizeCapabilityOverride(source.cutterInstalledOverride),
+        cashDrawerConnectedOverride: normalizeCapabilityOverride(source.cashDrawerConnectedOverride),
+        rasterImageSupportOverride: normalizeCapabilityOverride(source.rasterImageSupportOverride),
         routeLabels: Array.isArray(source.routeLabels)
           ? source.routeLabels.map(function(value: any) { return String(value || '').trim(); }).filter(Boolean)
           : [],
@@ -568,6 +671,19 @@
       }
     }
 
+    function ensureWorkstationPrinterAssignmentStore(db: IDBDatabase) {
+      if (!db.objectStoreNames.contains(STORE_WORKSTATION_PRINTER_ASSIGNMENTS)) {
+        var assignments = db.createObjectStore(STORE_WORKSTATION_PRINTER_ASSIGNMENTS, { keyPath: 'id' });
+        assignments.createIndex('by_merchantId', 'merchantId', { unique: false });
+        assignments.createIndex('by_locationId', 'locationId', { unique: false });
+        assignments.createIndex('by_stationId', 'stationId', { unique: false });
+        assignments.createIndex('by_stationPrinterId', 'stationPrinterId', { unique: false });
+        assignments.createIndex('by_cashDrawerPrinterId', 'cashDrawerPrinterId', { unique: false });
+        assignments.createIndex('by_updatedAt', 'updatedAt', { unique: false });
+        assignments.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+      }
+    }
+
     function seedMultiPrinterFromLegacySettings(tx: IDBTransaction) {
       if (!tx) return;
       try {
@@ -590,7 +706,7 @@
               secondaryRoles: settings.openCashDrawerWithCashSale ? ['cash_drawer'] : [],
               ip: settings.receiptPrinterIp,
               port: settings.receiptPrinterPort,
-              profile: settings.receiptPrinterProfile || 'generic_escpos',
+              profile: settings.receiptPrinterProfile || 'generic_escpos_thermal',
               paperWidth: settings.paperWidth,
               charactersPerLine: settings.charactersPerLine,
               defaultCopies: settings.copies,
@@ -636,6 +752,79 @@
             if (!next.defaultReceiptPrinterId && next.receiptPrinterId) next.defaultReceiptPrinterId = next.receiptPrinterId;
             next.migratedToMultiPrinterV2At = next.migratedToMultiPrinterV2At || nowIso();
             settingsStore.put(next);
+          });
+        };
+      } catch (_err) {
+        // Keep migration non-destructive.
+      }
+    }
+
+    function migrateWorkstationPrinterAssignmentsFromSettings(tx: IDBTransaction) {
+      if (!tx) return;
+      try {
+        var settingsStore = tx.objectStore(STORE_PRINTER_SETTINGS);
+        var assignmentStore = tx.objectStore(STORE_WORKSTATION_PRINTER_ASSIGNMENTS);
+        var printerStore = tx.objectStore(STORE_POS_PRINTER_CONFIGS);
+
+        settingsStore.getAll().onsuccess = function(event: any) {
+          var settingsRows = Array.isArray(event && event.target && event.target.result) ? event.target.result : [];
+          settingsRows.forEach(function(settings: any) {
+            var normalizedSettings = normalizePrinterSettingsRecord(settings || {});
+            var assignmentId = workstationPrinterAssignmentId(normalizedSettings);
+
+            assignmentStore.get(assignmentId).onsuccess = function(existingEvent: any) {
+              var existing = existingEvent && existingEvent.target ? existingEvent.target.result : null;
+              if (existing && existing.updatedAt && new Date(existing.updatedAt).getTime() >= new Date(normalizedSettings.updatedAt || 0).getTime()) {
+                return;
+              }
+
+              var candidateStationPrinterId = String(
+                normalizedSettings.defaultReceiptPrinterId
+                || normalizedSettings.receiptPrinterId
+                || ''
+              ).trim();
+
+              var candidateCashDrawerPrinterId = String(normalizedSettings.cashDrawerPrinterId || '').trim();
+              if (!candidateCashDrawerPrinterId && normalizedSettings.openCashDrawerWithCashSale && candidateStationPrinterId) {
+                candidateCashDrawerPrinterId = candidateStationPrinterId;
+              }
+
+              if (!candidateStationPrinterId && !candidateCashDrawerPrinterId) return;
+
+              var next = normalizeWorkstationPrinterAssignmentRecord(Object.assign({}, existing || {}, {
+                id: assignmentId,
+                merchantId: normalizedSettings.merchantId,
+                locationId: normalizedSettings.locationId,
+                stationId: normalizedSettings.stationId,
+                stationPrinterId: candidateStationPrinterId,
+                cashDrawerPrinterId: candidateCashDrawerPrinterId,
+                printVoidSlips: existing && existing.printVoidSlips !== undefined ? existing.printVoidSlips : true,
+                printEdits: existing && existing.printEdits !== undefined ? existing.printEdits : true,
+                printResends: existing && existing.printResends !== undefined ? existing.printResends : true,
+                createdAt: existing && existing.createdAt ? existing.createdAt : (normalizedSettings.createdAt || nowIso()),
+                updatedAt: nowIso(),
+                syncStatus: getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only'
+              }));
+
+              var pushNext = function() {
+                assignmentStore.put(next);
+              };
+
+              if (!next.stationPrinterId) {
+                pushNext();
+                return;
+              }
+
+              printerStore.get(next.stationPrinterId).onsuccess = function(printerEvent: any) {
+                var printerRow = printerEvent && printerEvent.target ? printerEvent.target.result : null;
+                if (!printerRow || printerRow.enabled !== false) {
+                  pushNext();
+                  return;
+                }
+                next.stationPrinterId = '';
+                pushNext();
+              };
+            };
           });
         };
       } catch (_err) {
@@ -754,6 +943,17 @@
             if (tx && tx.objectStore && db.objectStoreNames.contains(STORE_META)) {
               try { tx.objectStore(STORE_META).put({ id: 'schema_version', value: 6, migratedAt: nowIso() }); } catch (_err) {}
               try { tx.objectStore(STORE_META).put({ id: PRINTER_MIGRATION_META_KEY, migratedAt: nowIso(), status: 'done' }); } catch (_err2) {}
+            }
+          }
+
+          if (oldVersion < 7) {
+            ensurePrinterStores(db);
+            ensureMultiPrinterStores(db);
+            ensureWorkstationPrinterAssignmentStore(db);
+            migrateWorkstationPrinterAssignmentsFromSettings(tx);
+            if (tx && tx.objectStore && db.objectStoreNames.contains(STORE_META)) {
+              try { tx.objectStore(STORE_META).put({ id: 'schema_version', value: 7, migratedAt: nowIso() }); } catch (_err) {}
+              try { tx.objectStore(STORE_META).put({ id: WORKSTATION_PRINTER_ASSIGNMENT_KEY + '_migration_v1', migratedAt: nowIso(), status: 'done' }); } catch (_err2) {}
             }
           }
         };
@@ -1236,6 +1436,165 @@
         return normalized;
       },
 
+      getWorkstationPrinterAssignment: async function(input?: any) {
+        await ensureHistoryPersistenceReady();
+        var source = (typeof input === 'object' && input) ? input : { stationId: input };
+        var normalized = normalizeWorkstationPrinterAssignmentRecord(source || {});
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_WORKSTATION_PRINTER_ASSIGNMENTS, 'readonly');
+        var store = tx.objectStore(STORE_WORKSTATION_PRINTER_ASSIGNMENTS);
+        var row = await requestResult(store.get(normalized.id));
+        await txDone(tx);
+        if (!row) return null;
+        return normalizeWorkstationPrinterAssignmentRecord(row);
+      },
+
+      saveWorkstationPrinterAssignment: async function(input: any) {
+        await ensureHistoryPersistenceReady();
+        var source = input || {};
+        var current = await this.getWorkstationPrinterAssignment(source) || normalizeWorkstationPrinterAssignmentRecord(source || {});
+        var merged = Object.assign({}, current, source || {}, {
+          id: current.id,
+          merchantId: current.merchantId,
+          locationId: current.locationId,
+          stationId: current.stationId,
+          createdAt: current.createdAt || nowIso(),
+          updatedAt: nowIso(),
+          syncStatus: getPlanPersistenceMode() === 'persistent' ? 'pending' : 'local-only'
+        });
+        var normalized = normalizeWorkstationPrinterAssignmentRecord(merged);
+        var db = await openRuntimeDb();
+        var tx = db.transaction(STORE_WORKSTATION_PRINTER_ASSIGNMENTS, 'readwrite');
+        tx.objectStore(STORE_WORKSTATION_PRINTER_ASSIGNMENTS).put(normalized);
+        await txDone(tx);
+        return normalized;
+      },
+
+      validateAssignablePrinter: async function(input: any): Promise<any> {
+        var source = input || {};
+        var printerId = String(source.printerId || '').trim();
+        if (!printerId) throw new Error('Printer id is required.');
+        var printer = await this.getPosPrinterConfigById(printerId);
+        if (!printer) throw new Error('Printer is unavailable or no longer configured.');
+        if (printer.enabled === false) throw new Error('Disabled printers cannot be assigned.');
+        if (!String(printer.ip || '').trim() || !(Number(printer.port || 0) > 0)) {
+          throw new Error('Printer must have a valid connection configuration before assignment.');
+        }
+        var merchantId = String(source.merchantId || getMerchantId() || '');
+        var locationId = String(source.locationId || getLocationId() || '');
+        if (merchantId && String(printer.merchantId || '') !== merchantId) {
+          throw new Error('Printer belongs to a different merchant scope.');
+        }
+        if (locationId && String(printer.locationId || '') !== locationId) {
+          throw new Error('Printer belongs to a different location scope.');
+        }
+        return printer;
+      },
+
+      setStationPrinter: async function(stationOrInput: any, printerId?: string) {
+        var source = (typeof stationOrInput === 'object' && stationOrInput)
+          ? Object.assign({}, stationOrInput)
+          : { stationId: stationOrInput, printerId: printerId };
+        var scope = normalizeWorkstationPrinterAssignmentRecord(source || {});
+        var targetPrinterId = String(source.printerId || '').trim();
+        await this.validateAssignablePrinter({
+          printerId: targetPrinterId,
+          merchantId: scope.merchantId,
+          locationId: scope.locationId
+        });
+        return this.saveWorkstationPrinterAssignment({
+          merchantId: scope.merchantId,
+          locationId: scope.locationId,
+          stationId: scope.stationId,
+          stationPrinterId: targetPrinterId
+        });
+      },
+
+      clearStationPrinter: async function(stationOrInput: any) {
+        var source = (typeof stationOrInput === 'object' && stationOrInput) ? stationOrInput : { stationId: stationOrInput };
+        var scope = normalizeWorkstationPrinterAssignmentRecord(source || {});
+        return this.saveWorkstationPrinterAssignment({
+          merchantId: scope.merchantId,
+          locationId: scope.locationId,
+          stationId: scope.stationId,
+          stationPrinterId: ''
+        });
+      },
+
+      setCashDrawerPrinter: async function(stationOrInput: any, printerId?: string) {
+        var source = (typeof stationOrInput === 'object' && stationOrInput)
+          ? Object.assign({}, stationOrInput)
+          : { stationId: stationOrInput, printerId: printerId };
+        var scope = normalizeWorkstationPrinterAssignmentRecord(source || {});
+        var targetPrinterId = String(source.printerId || '').trim();
+        await this.validateAssignablePrinter({
+          printerId: targetPrinterId,
+          merchantId: scope.merchantId,
+          locationId: scope.locationId
+        });
+        return this.saveWorkstationPrinterAssignment({
+          merchantId: scope.merchantId,
+          locationId: scope.locationId,
+          stationId: scope.stationId,
+          cashDrawerPrinterId: targetPrinterId
+        });
+      },
+
+      clearCashDrawerPrinter: async function(stationOrInput: any) {
+        var source = (typeof stationOrInput === 'object' && stationOrInput) ? stationOrInput : { stationId: stationOrInput };
+        var scope = normalizeWorkstationPrinterAssignmentRecord(source || {});
+        return this.saveWorkstationPrinterAssignment({
+          merchantId: scope.merchantId,
+          locationId: scope.locationId,
+          stationId: scope.stationId,
+          cashDrawerPrinterId: ''
+        });
+      },
+
+      updateStationPrinterSlipOptions: async function(stationOrInput: any, options?: any) {
+        var source = (typeof stationOrInput === 'object' && stationOrInput && !options)
+          ? stationOrInput
+          : Object.assign({ stationId: stationOrInput }, options || {});
+        var scope = normalizeWorkstationPrinterAssignmentRecord(source || {});
+        var patch = {
+          merchantId: scope.merchantId,
+          locationId: scope.locationId,
+          stationId: scope.stationId
+        } as any;
+        if (source.printVoidSlips != null) patch.printVoidSlips = source.printVoidSlips !== false;
+        if (source.printEdits != null) patch.printEdits = source.printEdits !== false;
+        if (source.printResends != null) patch.printResends = source.printResends !== false;
+        return this.saveWorkstationPrinterAssignment(patch);
+      },
+
+      resolveStationPrinter: async function(input?: any) {
+        var assignment = await this.getWorkstationPrinterAssignment(input || {});
+        var printerId = String(assignment && assignment.stationPrinterId || '').trim();
+        if (!printerId) return null;
+        var printer = await this.getPosPrinterConfigById(printerId);
+        if (!printer || printer.enabled === false) return null;
+        if (!String(printer.ip || '').trim() || !(Number(printer.port || 0) > 0)) return null;
+        return printer;
+      },
+
+      resolveCashDrawerPrinter: async function(input?: any) {
+        var assignment = await this.getWorkstationPrinterAssignment(input || {});
+        var printerId = String(assignment && assignment.cashDrawerPrinterId || '').trim();
+        if (!printerId) return null;
+        var printer = await this.getPosPrinterConfigById(printerId);
+        if (!printer || printer.enabled === false) return null;
+        if (!String(printer.ip || '').trim() || !(Number(printer.port || 0) > 0)) return null;
+        return printer;
+      },
+
+      shouldPrintStationSlip: function(assignment: any, slipType: any) {
+        if (!assignment) return false;
+        if (slipType === 'void_slip') return assignment.printVoidSlips !== false;
+        if (slipType === 'edit_slip') return assignment.printEdits !== false;
+        if (slipType === 'resend_slip') return assignment.printResends !== false;
+        return false;
+      },
+
       listPosPrinterConfigs: async function(options?: any) {
         await ensureHistoryPersistenceReady();
         var rows = await listStoreAll(STORE_POS_PRINTER_CONFIGS);
@@ -1267,6 +1626,14 @@
       upsertPosPrinterConfig: async function(input: any) {
         await ensureHistoryPersistenceReady();
         var normalized = normalizePosPrinterConfigRecord(input || {});
+        if (normalized.enabled !== false) {
+          if (String(normalized.connectionType || '') !== 'network_printer') {
+            throw new Error('Only Network Printer connection type is currently supported for active printers.');
+          }
+          if (String(normalized.printMode || '') !== 'raw_escpos') {
+            throw new Error('Only Raw ESC/POS mode is currently supported for active printers.');
+          }
+        }
         var db = await openRuntimeDb();
         var tx = db.transaction(STORE_POS_PRINTER_CONFIGS, 'readwrite');
         var store = tx.objectStore(STORE_POS_PRINTER_CONFIGS);

@@ -102,6 +102,7 @@ describe('Previous Order View Mode', () => {
           <div class="order-detail-pane">
             <div class="order-detail-head">
               <b>Viewing Order #123</b>
+              <button id="previousOrderPrintReceipt">Print Receipt</button>
               <button id="previousOrderEditBtn">Edit</button>
             </div>
             <div class="order-payment-row">
@@ -135,6 +136,7 @@ describe('Previous Order View Mode', () => {
     const fixedSection = ticketPanel?.querySelector('.ticket-panel-fixed');
     const orderDetail = ticketPanel?.querySelector('.order-detail-pane');
     const pencilBtn = ticketPanel?.querySelector('#previousOrderEditBtn');
+    const printBtn = ticketPanel?.querySelector('#previousOrderPrintReceipt');
     const closeBtn = ticketPanel?.querySelector('.previous-order-footer #clearOrderDetail');
     const auditSummary = ticketPanel?.querySelector('.order-audit-summary');
     const auditToggle = ticketPanel?.querySelector('#togglePreviousOrderAudit');
@@ -144,6 +146,7 @@ describe('Previous Order View Mode', () => {
     expect(fixedSection?.classList.contains('is-hidden')).toBe(true);
     expect(orderDetail).toBeDefined();
     expect(orderDetail?.textContent).toContain('Viewing Order #123');
+    expect(printBtn).toBeDefined();
     expect(pencilBtn).toBeDefined();
     expect(closeBtn).toBeDefined();
     expect(auditSummary?.textContent).toContain('Pickup | completed | paid');
@@ -250,6 +253,7 @@ describe('Previous Order View Mode', () => {
         <div class="order-detail-pane">
           <div class="order-detail-head">
             <b>Viewing Order #456</b>
+            <button id="previousOrderPrintReceipt">Print Receipt</button>
             <button id="previousOrderEditBtn">Edit</button>
           </div>
           <div class="order-payment-row">
@@ -283,6 +287,7 @@ describe('Previous Order View Mode', () => {
 
     const orderDetail = container.querySelector('.order-detail-pane');
     const orderNum = orderDetail?.querySelector('.order-detail-head');
+    const printBtn = orderDetail?.querySelector('#previousOrderPrintReceipt');
     const badge = orderDetail?.querySelector('.order-payment-badge');
     const method = orderDetail?.querySelector('.order-payment-method');
     const summary = orderDetail?.querySelector('.order-audit-summary');
@@ -292,6 +297,7 @@ describe('Previous Order View Mode', () => {
     const totals = orderDetail?.querySelector('.order-detail-totals');
 
     expect(orderNum?.textContent).toContain('Order #456');
+    expect(printBtn).toBeDefined();
     expect(badge?.textContent).toBe('PAID');
     expect(method?.textContent).toContain('4242');
     expect(summary?.textContent).toContain('Pickup | completed | paid');
@@ -301,6 +307,33 @@ describe('Previous Order View Mode', () => {
     expect(items?.length).toBe(1);
     expect(items?.[0]?.textContent).toContain('3x Margherita Pizza');
     expect(totals?.textContent).toContain('$45.00');
+  });
+
+  it('shows Open Printer Settings action when station assignment is missing', () => {
+    const container = document.getElementById('test-container');
+    if (!container) throw new Error('Test container not found');
+
+    container.innerHTML = `
+      <section class="ticket-section order-detail-pane">
+        <div class="order-detail-head">
+          <b>Viewing Order #777</b>
+          <div class="order-detail-head-actions">
+            <button id="previousOrderPrintReceipt">Print Receipt</button>
+            <button id="previousOrderEditBtn">Edit</button>
+          </div>
+        </div>
+        <p class="order-receipt-status bad">No Station Printer is assigned to this workstation.</p>
+        <div class="ticket-actions previous-order-print-settings-action">
+          <button id="previousOrderOpenPrinterSettings" class="btn-secondary">Open Printer Settings</button>
+        </div>
+      </section>
+    `;
+
+    const status = container.querySelector('.order-receipt-status.bad');
+    const openSettingsBtn = container.querySelector('#previousOrderOpenPrinterSettings');
+    expect(status?.textContent).toContain('No Station Printer is assigned to this workstation.');
+    expect(openSettingsBtn).toBeDefined();
+    expect(openSettingsBtn?.textContent).toContain('Open Printer Settings');
   });
 
   it('uses stored order identity labels when present', () => {

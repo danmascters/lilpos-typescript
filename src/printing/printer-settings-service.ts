@@ -1,4 +1,5 @@
 /// <reference path="./printer-types.ts" />
+/// <reference path="./printer-profile-registry.ts" />
 
 (function(global: any) {
   'use strict';
@@ -18,8 +19,13 @@
 
   function defaultPrinterSettings(input?: any): PrinterSettingsRecord {
     var source = input || {};
-    var paperWidth: LilPosPaperWidth = String(source.paperWidth || '80mm') === '58mm' ? '58mm' : '80mm';
-    var charactersPerLine = clamp(source.charactersPerLine, 20, 64, paperWidth === '58mm' ? 32 : 48);
+    var rawPaperWidth = String(source.paperWidth || '80mm');
+    var paperWidth: LilPosPaperWidth = rawPaperWidth === '58mm' ? '58mm' : rawPaperWidth === '76mm' ? '76mm' : '80mm';
+    var defaultCpl = paperWidth === '58mm' ? 32 : paperWidth === '76mm' ? 40 : 48;
+    var charactersPerLine = clamp(source.charactersPerLine, 20, 64, defaultCpl);
+    var profileId = global.LilposPrinterProfiles && global.LilposPrinterProfiles.normalizeProfileId
+      ? global.LilposPrinterProfiles.normalizeProfileId(source.receiptPrinterProfile)
+      : String(source.receiptPrinterProfile || '');
     var now = String(source.updatedAt || new Date().toISOString());
 
     return {
@@ -35,11 +41,12 @@
       autoPrintReceiptAfterSale: source.autoPrintReceiptAfterSale === true,
       defaultReceiptPrinterId: String(source.defaultReceiptPrinterId || ''),
       defaultKitchenPrinterId: String(source.defaultKitchenPrinterId || ''),
+      cashDrawerPrinterId: String(source.cashDrawerPrinterId || ''),
       receiptPrinterId: String(source.receiptPrinterId || ''),
       receiptPrinterName: String(source.receiptPrinterName || ''),
       receiptPrinterIp: String(source.receiptPrinterIp || ''),
       receiptPrinterPort: clamp(source.receiptPrinterPort, 1, 65535, 9100),
-      receiptPrinterProfile: String(source.receiptPrinterProfile || ''),
+      receiptPrinterProfile: String(profileId || ''),
       receiptPrinterTransport: 'tcp_9100',
       paperWidth: paperWidth,
       charactersPerLine: charactersPerLine,
@@ -83,8 +90,12 @@
       feedLinesBeforeCut: clamp(source.feedLinesBeforeCut, 0, 10, 4),
       cutPaperAfterReceipt: source.cutPaperAfterReceipt !== false,
       openCashDrawerWithCashSale: source.openCashDrawerWithCashSale === true,
-      kitchenPaperWidth: String(source.kitchenPaperWidth || source.paperWidth || '80mm') === '58mm' ? '58mm' : '80mm',
-      kitchenCharactersPerLine: clamp(source.kitchenCharactersPerLine, 20, 64, paperWidth === '58mm' ? 32 : 48),
+      kitchenPaperWidth: String(source.kitchenPaperWidth || source.paperWidth || '80mm') === '58mm'
+        ? '58mm'
+        : String(source.kitchenPaperWidth || source.paperWidth || '80mm') === '76mm'
+        ? '76mm'
+        : '80mm',
+      kitchenCharactersPerLine: clamp(source.kitchenCharactersPerLine, 20, 64, defaultCpl),
       kitchenOrderNumberScale: String(source.kitchenOrderNumberScale || 'double_size'),
       kitchenItemTextScale: String(source.kitchenItemTextScale || 'normal'),
       kitchenModifierTextScale: String(source.kitchenModifierTextScale || 'normal'),

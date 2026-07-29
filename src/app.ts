@@ -597,6 +597,15 @@ const state: any = {
     receiptPrintJobRefId: '',
     receiptPrintBaseUrl: ''
   },
+  previousOrderReceipt: {
+    orderId: null,
+    printingLocked: false,
+    statusMessage: '',
+    statusTone: '',
+    printJobId: '',
+    printJobRefId: '',
+    printBaseUrl: ''
+  },
   focusOrderTypeDraftNameOnRender: false,
   newSalePendingLineNumber: null
 };
@@ -642,6 +651,34 @@ function persistManagerSettings() {
 function hydrateManagerSettingsFromStorage() {
   const settings = readManagerSettings();
   state.keyboardMode = normalizeKeyboardMode(settings.keyboardMode);
+}
+
+function hasCapability(capability, fallback = true) {
+  const user = (window as any).lilposCurrentUser || null;
+  const caps = user?.capabilities;
+  if (Array.isArray(caps)) {
+    return caps.includes(capability);
+  }
+  if (caps && typeof caps === 'object') {
+    if (typeof caps[capability] === 'boolean') return !!caps[capability];
+    if (typeof caps[String(capability).replace(/\./g, '_')] === 'boolean') return !!caps[String(capability).replace(/\./g, '_')];
+  }
+  if (capability === 'printer.configure' || capability === 'printer.station.assign' || capability === 'printer.cashdrawer.assign') {
+    return !!state.managerUnlocked;
+  }
+  return fallback;
+}
+
+function resetPreviousOrderReceiptState(orderId = null) {
+  state.previousOrderReceipt = {
+    orderId,
+    printingLocked: false,
+    statusMessage: '',
+    statusTone: '',
+    printJobId: '',
+    printJobRefId: '',
+    printBaseUrl: ''
+  };
 }
 
 function normalizeIntentText(value) {
@@ -2367,6 +2404,131 @@ async function printOrderNumberReceipt(kind) {
   }
 }
 
+function openPrinterSettingsFromExistingOrder() {
+  state.managerUnlocked = true;
+  state.managerSettingsSection = 'printers';
+  render();
+}
+
+async function printExistingOrderReceiptCopy() {
+  if (!hasCapability('order.receipt.reprint', true)) {
+    state.previousOrderReceipt.statusMessage = 'You do not have permission to print receipt copies.';
+    state.previousOrderReceipt.statusTone = 'bad';
+    render();
+    return;
+  }
+  if (!printJobService) {
+    state.previousOrderReceipt.statusMessage = 'Print service is not available in this build.';
+    state.previousOrderReceipt.statusTone = 'bad';
+    render();
+    return;
+  }
+
+  var order = selectedOrderForDetail();
+  var orderId = String(order && order.id || state.selectedOrderId || '').trim();
+  if (!orderId) {
+    state.previousOrderReceipt.statusMessage = 'Order data is no longer available in local history.';
+    state.previousOrderReceipt.statusTone = 'bad';
+    render();
+    return;
+  }
+
+  if (state.previousOrderReceipt.printingLocked) return;
+
+  var stationId = String(lilposDataService.getStationNumber ? lilposDataService.getStationNumber() : STATION_NUMBER);
+  var stationScope = {
+    merchantId: String(lilposDataService.getMerchantId ? lilposDataService.getMerchantId() : 'local-merchant'),
+    locationId: String(lilposDataService.getLocationId ? lilposDataService.getLocationId() : 'local-location'),
+    stationId: stationId
+  };
+
+  var assignment = lilposDataService.getWorkstationPrinterAssignment
+    ? await lilposDataService.getWorkstationPrinterAssignment(stationScope)
+    : null;
+  if (!assignment || !String(assignment.stationPrinterId || '').trim()) {
+    state.previousOrderReceipt.statusMessage = 'No Station Printer is assigned to this workstation.';
+    state.previousOrderReceipt.statusTone = 'bad';
+    render();
+    return;
+  }
+
+  var stationPrinter = lilposDataService.resolveStationPrinter
+    ? await lilposDataService.resolveStationPrinter(stationScope)
+    : null;
+  if (!stationPrinter || stationPrinter.enabled === false) {
+    state.previousOrderReceipt.statusMessage = 'The Station Printer assigned to this workstation is unavailable or no longer configured.';
+    state.previousOrderReceipt.statusTone = 'bad';
+    render();
+    return;
+  }
+
+  var hydrated = await hydratePersistedOrderDetail(orderId);
+  if (!hydrated) {
+    state.previousOrderReceipt.statusMessage = 'Order data is no longer available in local history.';
+    state.previousOrderReceipt.statusTone = 'bad';
+    render();
+    return;
+  }
+
+  var actionId = 'existing_order_copy_' + uid();
+  state.previousOrderReceipt.orderId = orderId;
+  state.previousOrderReceipt.printingLocked = true;
+  state.previousOrderReceipt.statusMessage = 'Sending receipt...';
+  state.previousOrderReceipt.statusTone = 'pending';
+  render();
+
+  var submit = await printJobService.submitCustomerReceipt({
+    order: hydrated,
+    isReprint: true,
+    reprintId: actionId,
+    requestedFrom: 'existing_order',
+    uniquePrintActionId: actionId,
+    forceStationPrinterId: String(stationPrinter.id || ''),
+    changeDue: 0,
+    stationId: stationId
+  });
+
+  if (!submit.ok) {
+    state.previousOrderReceipt.printingLocked = false;
+    state.previousOrderReceipt.statusMessage = submit.message || 'Receipt could not be sent';
+    state.previousOrderReceipt.statusTone = 'bad';
+    render();
+    return;
+  }
+
+  state.previousOrderReceipt.printingLocked = false;
+  state.previousOrderReceipt.printJobId = String(submit.printJobId || '');
+  state.previousOrderReceipt.printJobRefId = String(submit.localRef?.id || '');
+  state.previousOrderReceipt.printBaseUrl = String(submit.baseUrl || '');
+  state.previousOrderReceipt.statusMessage = submit.status === 'TRANSMITTED' ? 'Sent to printer' : 'Receipt queued';
+  state.previousOrderReceipt.statusTone = submit.status === 'TRANSMITTED' ? 'ok' : 'pending';
+  render();
+
+  if (printStatusService && submit.printJobId && submit.baseUrl) {
+    void printStatusService.pollUntilTerminal({
+      baseUrl: submit.baseUrl,
+      jobId: submit.printJobId,
+      localRef: submit.localRef,
+      fastWindowMs: 15000,
+      intervalFastMs: 1500,
+      intervalSlowMs: 6000,
+      maxRuntimeMs: 90000,
+      onUpdate: ({ status, message }) => {
+        if (String(state.selectedOrderId || '') !== orderId) return;
+        state.previousOrderReceipt.statusMessage = message || 'Receipt queued';
+        state.previousOrderReceipt.statusTone = status === 'TRANSMITTED'
+          ? 'ok'
+          : status === 'FAILED_FINAL' || status === 'CANCELED'
+          ? 'bad'
+          : status === 'RETRY_WAIT'
+          ? 'warn'
+          : 'pending';
+        render();
+      }
+    });
+  }
+}
+
 async function applyPostSaleReceiptBehavior() {
   if (!printJobService || !state.orderNumberDialog.open) return;
   const settings = await printJobService.resolveSettings({
@@ -2507,19 +2669,50 @@ function updateOrderPhoneFromPaymentPane(phoneValue: string) {
   }
 }
 
-function seedPaymentDialogForPaneCompletion(paymentType: string, amountDue: number, totalCents: number) {
+function paymentMathHelpers() {
+  return window.LilposPaymentMath || null;
+}
+
+function paymentPaneCardChargeBreakdown(paneState: PaymentPaneState) {
+  const math = paymentMathHelpers();
+  if (math?.computeCardChargeBreakdownCents) {
+    return math.computeCardChargeBreakdownCents(
+      Number(paneState.remainingBalanceCents || 0),
+      Number(paneState.cardTipAmountCents || 0),
+      Number(paneState.splitProcessingAmountCents || 0)
+    );
+  }
+  const splitAmount = Math.max(0, Number(paneState.splitProcessingAmountCents || 0));
+  const baseAmountCents = splitAmount > 0
+    ? splitAmount
+    : Math.max(0, Number(paneState.remainingBalanceCents || 0));
+  const tipAmountCents = Math.max(0, Number(paneState.cardTipAmountCents || 0));
+  return {
+    baseAmountCents,
+    tipAmountCents,
+    amountToChargeCents: baseAmountCents + tipAmountCents
+  };
+}
+
+function seedPaymentDialogForPaneCompletion(
+  paymentType: string,
+  amountDue: number,
+  totalCents: number,
+  options: { tipAmount?: number } = {}
+) {
+  const tipAmount = Math.max(0, Number(options.tipAmount || 0));
   state.paymentDialog = {
     open: false,
     baseTotal: +(totalCents / 100).toFixed(2),
     paymentType,
-    tipMode: 'none',
-    customTip: '0.00',
+    tipMode: tipAmount > 0 ? 'custom' : 'none',
+    customTip: tipAmount.toFixed(2),
     entryAmount: '0.00',
     paymentLines: [{
       id: uid(),
       paymentType,
       amount: amountDue,
-      tipAmount: 0
+      tipAmount
     }]
   };
 }
@@ -2878,7 +3071,10 @@ async function handlePaymentPanePrimaryAction() {
   const isCash = paneState.selectedPaymentMethod === 'cash';
   const isTextPaymentLink = paneState.selectedPaymentMethod === 'text-payment-link';
   const isOtherMethod = paneState.selectedPaymentMethod === 'gift-or-other';
-  const cardTipAmountCents = isCard ? Math.max(0, Number(paneState.cardTipAmountCents || 0)) : 0;
+  const cardCharge = isCard
+    ? paymentPaneCardChargeBreakdown(paneState)
+    : { baseAmountCents: 0, tipAmountCents: 0, amountToChargeCents: 0 };
+  const cardTipAmountCents = isCard ? cardCharge.tipAmountCents : 0;
   const isManualCardEntry = isCard && !paneState.selectedSavedCardId && paneState.cardEntryMode === 'manual';
 
   if (isManualCardEntry && !paymentPaneManualEntryIsComplete(paneState)) {
@@ -3086,7 +3282,7 @@ async function handlePaymentPanePrimaryAction() {
           : isManualCardEntry
           ? 'Manual Card Entry'
           : 'Credit/Debit Card',
-        amountCents: paneState.remainingBalanceCents,
+        amountCents: cardCharge.baseAmountCents,
         tipAmountCents: cardTipAmountCents,
         cardBrand: selectedCard?.cardBrand || (isManualCardEntry ? manualBrand : ''),
         lastFour: selectedCard?.lastFour || (isManualCardEntry ? manualLast4 : '')
@@ -3094,12 +3290,31 @@ async function handlePaymentPanePrimaryAction() {
       render();
       return;
     }
-    const cofMsg = paneState.selectedSavedCardId
-      ? 'Card on file integration not configured yet.'
-      : 'Card terminal integration not configured yet.';
-    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'set-card-status', status: 'error', errorMessage: cofMsg });
-    state.paymentPaneState = window.LilposPaymentPane.reducer(state.paymentPaneState, { type: 'set-submitting', submitting: false });
-    render();
+    const selectedCard = (paneInput.savedPaymentMethods || []).find((entry) => entry.savedPaymentMethodId === paneState.selectedSavedCardId) || null;
+    const manualBrand = paymentPaneManualCardBrand(paneState);
+    const manualLast4 = paymentPaneManualCardLastFour(paneState);
+    const paymentType = selectedCard
+      ? 'Card on File'
+      : isManualCardEntry
+      ? 'Manual Card Entry'
+      : 'Credit/Debit Card';
+    seedPaymentDialogForPaneCompletion(
+      paymentType,
+      +(cardCharge.baseAmountCents / 100).toFixed(2),
+      paneState.totalCents,
+      { tipAmount: +(cardCharge.tipAmountCents / 100).toFixed(2) }
+    );
+    state.paymentDialog.paymentLines = state.paymentDialog.paymentLines.map((line) => ({
+      ...line,
+      cardBrand: selectedCard?.cardBrand || (isManualCardEntry ? manualBrand : ''),
+      lastFour: selectedCard?.lastFour || (isManualCardEntry ? manualLast4 : '')
+    }));
+    completePayNowOrder();
+    if (!state.orderSendLocked) {
+      state.paymentPaneState = null;
+      state.paymentPaneInput = null;
+      state.mainView = MAIN_VIEWS.menu;
+    }
     return;
   }
 
@@ -3314,11 +3529,31 @@ async function completePayNowOrder() {
   payload.paymentLines = state.paymentDialog.paymentLines.map((line) => ({
     paymentType: line.paymentType,
     amount: Number(line.amount || 0),
-    tipAmount: Number(line.tipAmount || 0)
+    tipAmount: Number(line.tipAmount || 0),
+    cardBrand: String(line.cardBrand || '').toLowerCase(),
+    lastFour: String(line.lastFour || '')
   }));
+  const paymentBaseAmountCents = payload.paymentLines.reduce((sum, line) => {
+    return sum + Math.max(0, Math.round(Number(line.amount || 0) * 100));
+  }, 0);
+  const paymentTipAmountCents = payload.paymentLines.reduce((sum, line) => {
+    return sum + Math.max(0, Math.round(Number(line.tipAmount || 0) * 100));
+  }, 0);
   payload.paymentMock = {
     processor: 'LOCAL_MOCK',
-    approvedAt: new Date().toISOString()
+    approvedAt: new Date().toISOString(),
+    request: {
+      baseAmountCents: paymentBaseAmountCents,
+      tipAmountCents: paymentTipAmountCents,
+      amountCents: paymentBaseAmountCents + paymentTipAmountCents,
+      paymentLines: payload.paymentLines.map((line) => ({
+        paymentType: line.paymentType,
+        baseAmountCents: Math.max(0, Math.round(Number(line.amount || 0) * 100)),
+        tipAmountCents: Math.max(0, Math.round(Number(line.tipAmount || 0) * 100)),
+        cardBrand: String(line.cardBrand || '').toLowerCase(),
+        cardLastFour: String(line.lastFour || '')
+      }))
+    }
   };
   payload.orderNumber = orderNumber;
 
@@ -3810,6 +4045,7 @@ async function hydratePersistedOrderDetail(orderId) {
 async function selectOrderForDetail(orderId) {
   state.selectedOrderId = orderId || null;
   state.previousOrderAuditExpanded = false;
+  resetPreviousOrderReceiptState(state.selectedOrderId || null);
   if (state.selectedOrderId) {
     await hydratePersistedOrderDetail(state.selectedOrderId);
   }
@@ -4890,7 +5126,8 @@ const printerSettingsController = window.LilposPrinterSettings?.createController
   ? window.LilposPrinterSettings.createController({
       dataService: lilposDataService,
       onChange: () => render(),
-      requestedBy: () => 'Manager'
+      requestedBy: () => 'Manager',
+      hasCapability: (capability) => hasCapability(capability, true)
     })
   : null;
 const deliveryManagerController = window.LilposDeliveryManagerRuntime?.createController
@@ -7348,6 +7585,7 @@ function navIcon(name) {
     split: '<path d="M12 4v16"></path><path d="M4 8h7"></path><path d="M13 16h7"></path><path d="M6 6l-2 2 2 2"></path><path d="M18 14l2 2-2 2"></path>',
     link: '<path d="M10.5 13.5l3-3"></path><path d="M8.2 15.8l-1.4 1.4a3 3 0 0 1-4.2-4.2l2.1-2.1a3 3 0 0 1 4.2 0"></path><path d="M15.8 8.2l1.4-1.4a3 3 0 1 1 4.2 4.2l-2.1 2.1a3 3 0 0 1-4.2 0"></path>',
     payment: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18"></path><path d="M7 15h3"></path><path d="M12 15h5"></path>',
+    printer: '<rect x="6" y="3" width="12" height="6" rx="1"></rect><rect x="5" y="10" width="14" height="8" rx="2"></rect><path d="M8 14h8"></path><path d="M9 18h6"></path>',
     'face-scan': '<path d="M4 8V6a2 2 0 0 1 2-2h2"></path><path d="M20 8V6a2 2 0 0 0-2-2h-2"></path><path d="M4 16v2a2 2 0 0 0 2 2h2"></path><path d="M20 16v2a2 2 0 0 1-2 2h-2"></path><circle cx="12" cy="11" r="2.6"></circle><path d="M8.5 16c.9-1.8 2-2.6 3.5-2.6s2.6.8 3.5 2.6"></path>'
   };
   return `<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
@@ -8313,14 +8551,25 @@ function renderOrderDetailInTicketPane() {
   const recalculatedTotalCents = window.LilposOrderTicketSummary && typeof window.LilposOrderTicketSummary.totalWithLiveTipCents === 'function'
     ? window.LilposOrderTicketSummary.totalWithLiveTipCents(order.total, displayedTipCents)
     : Math.round((Number(order.total || 0) * 100) + displayedTipCents);
+  const canPrintReceiptCopy = hasCapability('order.receipt.reprint', true);
+  const receiptState = state.previousOrderReceipt && String(state.previousOrderReceipt.orderId || '') === String(order.id || '')
+    ? state.previousOrderReceipt
+    : { printingLocked: false, statusMessage: '', statusTone: '' };
+  const needsPrinterSettingsAction = receiptState.statusMessage === 'No Station Printer is assigned to this workstation.'
+    || receiptState.statusMessage === 'The Station Printer assigned to this workstation is unavailable or no longer configured.';
   return `
     <section class="ticket-section order-detail-pane">
       <div class="order-detail-head">
         <b>Viewing Order #${h(displayNumber)}</b>
-        <button id="previousOrderEditBtn" class="previous-order-edit-btn" title="Edit completed order (coming soon)" aria-label="Edit completed order (coming soon)">
-          <span class="icon-glyph">${navIcon('pencil')}</span>
-        </button>
+        <div class="order-detail-head-actions">
+          ${canPrintReceiptCopy ? `<button id="previousOrderPrintReceipt" class="previous-order-print-btn" title="Print Receipt" aria-label="Print Receipt" ${receiptState.printingLocked ? 'disabled' : ''}><span class="icon-glyph">${navIcon('printer')}</span><span>Print Receipt</span></button>` : ''}
+          <button id="previousOrderEditBtn" class="previous-order-edit-btn" title="Edit completed order (coming soon)" aria-label="Edit completed order (coming soon)">
+            <span class="icon-glyph">${navIcon('pencil')}</span>
+          </button>
+        </div>
       </div>
+      ${receiptState.statusMessage ? `<p class="order-receipt-status ${receiptState.statusTone || ''}">${h(receiptState.statusMessage)}</p>` : ''}
+      ${needsPrinterSettingsAction ? '<div class="ticket-actions previous-order-print-settings-action"><button id="previousOrderOpenPrinterSettings" class="btn-secondary">Open Printer Settings</button></div>' : ''}
       <div class="order-payment-row">
         <div class="order-payment-badge ${paidClass}">${paidText}</div>
         ${previousOrderPaymentSummaryHtml(order)}
@@ -9973,7 +10222,16 @@ function attachEvents() {
   $('#clearOrderDetail')?.addEventListener('click', () => {
     state.selectedOrderId = null;
     state.previousOrderAuditExpanded = false;
+    resetPreviousOrderReceiptState(null);
     render();
+  });
+
+  $('#previousOrderPrintReceipt')?.addEventListener('click', () => {
+    void printExistingOrderReceiptCopy();
+  });
+
+  $('#previousOrderOpenPrinterSettings')?.addEventListener('click', () => {
+    openPrinterSettingsFromExistingOrder();
   });
 
   $('#paySelectedOrderCash')?.addEventListener('click', () => {

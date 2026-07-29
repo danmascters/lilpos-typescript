@@ -2848,6 +2848,39 @@ button.lilpay-split-method-choice:focus-visible {
   margin-bottom: 6px;
 }
 
+.order-detail-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.previous-order-print-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border-radius: 999px;
+  border: 1px solid #b8c5d6;
+  background: #ffffff;
+  color: #0f2357;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 12px;
+}
+
+.previous-order-print-btn .nav-svg {
+  width: 14px;
+  height: 14px;
+}
+
+.previous-order-print-btn:disabled {
+  opacity: 0.5;
+}
+
+.previous-order-print-settings-action {
+  margin-top: 6px;
+}
+
 .previous-order-edit-btn {
   width: 36px;
   height: 36px;
@@ -2871,6 +2904,29 @@ button.lilpay-split-method-choice:focus-visible {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.order-receipt-status {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.order-receipt-status.ok {
+  color: #166534;
+}
+
+.order-receipt-status.pending {
+  color: #1d4ed8;
+}
+
+.order-receipt-status.warn {
+  color: #92400e;
+}
+
+.order-receipt-status.bad {
+  color: #991b1b;
 }
 
 .order-payment-method {
@@ -5668,6 +5724,283 @@ button.lilpay-split-method-choice:focus-visible {
   border-top: 1px solid #1f2937;
 }
 
+.ps-top-nav {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.ps-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(2, 6, 23, 0.68);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.ps-modal {
+  width: min(1080px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  background: #0b1321;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.ps-editor-modal {
+  height: min(92vh, 820px);
+  overflow: hidden;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.ps-modal > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ps-modal > header h4 {
+  margin: 0;
+  color: #f8fafc;
+}
+
+.ps-status-strip {
+  gap: 10px;
+}
+
+.ps-status-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  color: #dbeafe;
+}
+
+.ps-printer-card-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.ps-printer-table-main td {
+  min-width: 120px;
+}
+
+.ps-printer-table-main td:first-child {
+  min-width: 160px;
+}
+
+.ps-row-open {
+  cursor: pointer;
+}
+
+.ps-row-open:hover {
+  background: #13243a;
+}
+
+.ps-row-open:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: -2px;
+}
+
+.ps-table-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ps-table-toggle input {
+  cursor: pointer;
+}
+
+.ps-tag.muted {
+  color: #dbeafe;
+  background: #334155;
+}
+
+.ps-icon-danger-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid #7f1d1d;
+  background: #3f1111;
+  color: #fecaca;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ps-icon-danger-btn:hover {
+  background: #5f1818;
+}
+
+.ps-icon-trash {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ps-printer-card {
+  border: 1px solid #24344e;
+  border-radius: 12px;
+  background: #0a1322;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.ps-printer-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ps-printer-name-wrap h5 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 16px;
+}
+
+.ps-printer-name-wrap small {
+  color: #93c5fd;
+}
+
+.ps-printer-summary,
+.ps-printer-rule-summary,
+.ps-printer-assignments,
+.ps-test-status {
+  color: #cbd5e1;
+}
+
+.ps-printer-assignments {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.ps-more-menu {
+  display: grid;
+  gap: 6px;
+  border-top: 1px dashed #334155;
+  padding-top: 8px;
+}
+
+.ps-scanned-list {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.ps-scanned-card {
+  border: 1px solid #24344e;
+  border-radius: 10px;
+  background: #0a1322;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.ps-activity-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ps-activity-card {
+  border: 1px solid #24344e;
+  border-radius: 10px;
+  background: #0a1322;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.ps-activity-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ps-error-inline {
+  color: #fecaca;
+}
+
+.ps-editor-shell {
+  margin-top: 8px;
+}
+
+.ps-editor-nav {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.ps-editor-panel {
+  border: 1px solid #24344e;
+  border-radius: 12px;
+  background: #0a1322;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.ps-editor-assignment {
+  border: 1px solid #24344e;
+  border-radius: 10px;
+  background: #0a1322;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.ps-content-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ps-content-grid label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #273449;
+  border-radius: 10px;
+  background: #0d1728;
+}
+
+.ps-advanced-details {
+  border: 1px solid #273449;
+  border-radius: 10px;
+  background: #0d1728;
+  padding: 8px 10px;
+}
+
+.ps-advanced-details summary {
+  cursor: pointer;
+  color: #bfdbfe;
+  font-weight: 700;
+}
+
+.ps-rule-summary {
+  margin: 0;
+  color: #dbeafe;
+}
+
+.ps-profile-help {
+  margin: 0;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
 @media (max-width: 1200px) {
   .ps-grid-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5681,6 +6014,10 @@ button.lilpay-split-method-choice:focus-visible {
   .ps-tab-nav {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .ps-editor-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -5689,6 +6026,19 @@ button.lilpay-split-method-choice:focus-visible {
   .ps-grid-2,
   .ps-tab-nav {
     grid-template-columns: 1fr;
+  }
+
+  .ps-content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ps-modal {
+    width: 98vw;
+    padding: 10px;
+  }
+
+  .ps-editor-modal {
+    height: 94vh;
   }
 }
 

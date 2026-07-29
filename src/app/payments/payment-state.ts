@@ -50,10 +50,12 @@ function createStateFromInput(input: PaymentPaneInput): PaymentPaneState {
 }
 
 function cardPaymentBaseAmountCents(state: PaymentPaneState): number {
-  if (Number(state.splitProcessingAmountCents || 0) > 0) {
-    return Math.max(0, Number(state.splitProcessingAmountCents || 0));
-  }
-  return Math.max(0, Number(state.remainingBalanceCents || 0));
+  const breakdown = computeCardChargeBreakdownCents(
+    Number(state.remainingBalanceCents || 0),
+    0,
+    Number(state.splitProcessingAmountCents || 0)
+  );
+  return breakdown.baseAmountCents;
 }
 
 function computeCardTipAmountCents(state: PaymentPaneState): number {

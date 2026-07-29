@@ -38,6 +38,9 @@ describe('payment pane render', () => {
     expect(html).toContain('Tap / Insert / Swipe');
     expect(html).toContain('Charge Card & Complete');
     expect(html).toContain('Tip $0.00');
+    expect(html).toContain('Balance Before Tip');
+    expect(html).toContain('Amount to Charge');
+    expect(html).toContain('$27.05');
     expect(html).toContain('No Tip');
     expect(html).toContain('Custom Amount');
   });
@@ -56,7 +59,7 @@ describe('payment pane render', () => {
     expect(html).toContain('Use Physical Terminal');
   });
 
-  it('renders card tip value in consolidated controls and top balance summary', () => {
+  it('renders card tip value with base, tip, and amount-to-charge breakdown', () => {
     const state = {
       ...createStateFromInput(input),
       selectedPaymentMethod: 'card',
@@ -67,8 +70,12 @@ describe('payment pane render', () => {
     };
     const html = renderPane(input, state);
     expect(html).toContain('Tip $5.00');
-    expect(html).toContain('Tip Amount');
-    expect(html).toContain('lilpay-balance-tip-value">$5.00');
+    expect(html).toContain('Balance Before Tip');
+    expect(html).toContain('Tip');
+    expect(html).toContain('Amount to Charge');
+    expect(html).toContain('$27.05');
+    expect(html).toContain('$5.00');
+    expect(html).toContain('$32.05');
   });
 
   it('card mode balance due reflects selected tip amount dynamically', () => {
