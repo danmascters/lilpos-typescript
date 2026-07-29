@@ -1937,68 +1937,7 @@ function baseMockCustomers() {
 state.mockCustomers = baseMockCustomers();
 
 function baseMockOrders() {
-  return [
-    {
-      id: 'ord_1001',
-      number: '1001',
-      customerName: 'Maria Rossi',
-      orderType: 'delivery',
-      status: 'open',
-      source: 'phone',
-      onlineOnly: false,
-      timeLabel: '6:12 PM',
-      total: 32.45,
-      lines: ['Large Pepperoni', 'Garlic Knots', 'Soda']
-    },
-    {
-      id: 'ord_1002',
-      number: '1002',
-      customerName: 'Guest',
-      orderType: 'pickup',
-      status: 'open',
-      source: 'counter',
-      onlineOnly: false,
-      timeLabel: '6:25 PM',
-      total: 18.0,
-      lines: ['2 Slices', 'Bottle Water']
-    },
-    {
-      id: 'ord_0998',
-      number: '0998',
-      customerName: 'Nina Santiago',
-      orderType: 'delivery',
-      status: 'completed',
-      source: 'online',
-      onlineOnly: true,
-      timeLabel: '5:02 PM',
-      total: 41.7,
-      lines: ['Family Pie', 'Garden Salad']
-    },
-    {
-      id: 'ord_0996',
-      number: '0996',
-      customerName: 'Tony Greco',
-      orderType: 'togo',
-      status: 'completed',
-      source: 'counter',
-      onlineOnly: false,
-      timeLabel: '4:48 PM',
-      total: 14.5,
-      lines: ['Calzone']
-    },
-    {
-      id: 'ord_1011',
-      number: '1011',
-      customerName: 'Web Guest',
-      orderType: 'pickup',
-      status: 'open',
-      source: 'online',
-      onlineOnly: true,
-      timeLabel: '6:41 PM',
-      total: 22.95,
-      lines: ['Small Veggie', 'Breadsticks']
-    }
-  ];
+  return [];
 }
 
 state.mockOrders = baseMockOrders();
