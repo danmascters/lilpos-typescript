@@ -61,6 +61,35 @@ function splitEnsurePendingPortion(workspace: SplitPaymentWorkspace): SplitPayme
   return splitRecomputeWorkspace(next);
 }
 
+function splitEnsureMinimumRows(workspace: SplitPaymentWorkspace): SplitPaymentWorkspace {
+  const clean = splitRecomputeWorkspace({ ...workspace, portions: [...workspace.portions] });
+  if (clean.remainingCents <= 0) return clean;
+
+  const approved = clean.portions.filter((portion) => portion.status === 'APPROVED');
+  const editable = clean.portions.filter((portion) => portion.status === 'PENDING' || portion.status === 'DECLINED');
+  const minimumRows = Math.max(2, Math.min(50, Math.round(Number(clean.requestedPaymentCount || 2))));
+
+  if (approved.length > 0 || editable.length >= minimumRows) {
+    return clean;
+  }
+
+  const method = editable[0]?.paymentMethod || splitDefaultPortionMethod();
+  const rebuilt = window.LilposSplitPaymentMath.splitEvenlyPortions(clean.remainingCents, minimumRows)
+    .filter((amount) => amount > 0)
+    .map((amount, index) => splitBuildPortion({
+      sequence: splitNextPortionSequence(approved) + index,
+      plannedAmountCents: amount,
+      paymentMethod: method,
+      status: 'PENDING'
+    }));
+
+  return splitRecomputeWorkspace({
+    ...clean,
+    portions: [...approved, ...rebuilt],
+    amountEditorCents: clean.remainingCents
+  });
+}
+
 function splitRecomputeWorkspace(workspace: SplitPaymentWorkspace): SplitPaymentWorkspace {
   const portions = Array.isArray(workspace.portions) ? workspace.portions : [];
   const paidCents = window.LilposSplitPaymentMath.splitPaidSoFarCents(portions);
@@ -101,7 +130,7 @@ function createSplitWorkspace(input: PaymentPaneInput): SplitPaymentWorkspace {
     idempotencyKey: `split-plan-${input.paymentContextOrderId || input.displayOrderNumber || Date.now()}`,
     syncStatus: 'local-only'
   };
-  return splitEnsurePendingPortion(workspace);
+  return splitEnsureMinimumRows(splitEnsurePendingPortion(workspace));
 }
 
 function splitSetMode(workspace: SplitPaymentWorkspace, mode: SplitPaymentMode): SplitPaymentWorkspace {
@@ -186,7 +215,7 @@ function splitRemovePendingPortion(workspace: SplitPaymentWorkspace, portionId: 
     if (portion.id !== portionId) return true;
     return portion.status !== 'PENDING' && portion.status !== 'DECLINED';
   });
-  return splitEnsurePendingPortion(splitRecomputeWorkspace({ ...workspace, portions: nextPortions }));
+  return splitEnsureMinimumRows(splitEnsurePendingPortion(splitRecomputeWorkspace({ ...workspace, portions: nextPortions })));
 }
 
 function splitMarkPortionProcessing(workspace: SplitPaymentWorkspace, portionId: string): SplitPaymentWorkspace {

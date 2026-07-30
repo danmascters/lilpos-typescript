@@ -20,15 +20,33 @@ function orderDetailItemsHtml(items: PaymentPaneOrderItem[]): string {
   `).join('');
 }
 
+function summaryTipAndTotalCents(state: PaymentPaneState): { tipCents: number; totalCents: number } {
+  const baseTipCents = Math.max(0, Number(state.tipCents || 0));
+  const baseTotalCents = Math.max(0, Number(state.totalCents || 0));
+  if (state.selectedPaymentMethod !== 'card') {
+    return {
+      tipCents: baseTipCents,
+      totalCents: baseTotalCents
+    };
+  }
+  const liveCardTipCents = cardChargeBreakdown(state).tipAmountCents;
+  const tipCents = baseTipCents + liveCardTipCents;
+  return {
+    tipCents,
+    totalCents: baseTotalCents + tipCents
+  };
+}
+
 function rightSummaryHtml(input: PaymentPaneInput, state: PaymentPaneState): string {
+  const summary = summaryTipAndTotalCents(state);
   return `
     <aside class="lilpay-side-panel">
       <section class="lilpay-side-card">
         <h3>Order Summary</h3>
         <div class="lilpay-summary-row"><span>Subtotal</span><b>${formatCents(state.subtotalCents)}</b></div>
         <div class="lilpay-summary-row"><span>Tax</span><b>${formatCents(state.taxCents)}</b></div>
-        ${state.tipCents > 0 ? `<div class="lilpay-summary-row"><span>Tip</span><b>${formatCents(state.tipCents)}</b></div>` : ''}
-        <div class="lilpay-summary-row lilpay-summary-total"><span>Total</span><b>${formatCents(state.totalCents)}</b></div>
+        ${summary.tipCents > 0 ? `<div class="lilpay-summary-row"><span>Tip</span><b>${formatCents(summary.tipCents)}</b></div>` : ''}
+        <div class="lilpay-summary-row lilpay-summary-total"><span>Total</span><b>${formatCents(summary.totalCents)}</b></div>
         ${state.paymentsAppliedCents > 0 ? `<div class="lilpay-summary-row"><span>Payments Applied</span><b>- ${formatCents(state.paymentsAppliedCents)}</b></div>` : ''}
         <div class="lilpay-remaining-box"><span>Remaining Balance</span><b>${formatCents(state.remainingBalanceCents)}</b></div>
       </section>

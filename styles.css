@@ -3621,11 +3621,18 @@ button.lilpay-split-method-choice:focus-visible {
 .order-number-actions {
   display: grid;
   grid-template-columns: 1fr;
+  gap: calc(8px * var(--receipt-scale));
 }
 
 .order-number-dialog .call-modal-actions {
   margin-top: calc(10px * var(--receipt-scale));
   gap: calc(8px * var(--receipt-scale));
+  grid-template-columns: 1fr;
+}
+
+.order-number-dialog .call-modal-actions button {
+  width: 100%;
+  text-align: center;
 }
 
 .order-number-dialog .btn-secondary,
@@ -3677,6 +3684,54 @@ button.lilpay-split-method-choice:focus-visible {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.modifier-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.modifier-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.modifier-qty-jogger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.modifier-qty-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid #b8c5d6;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.modifier-qty-value {
+  min-width: 28px;
+  text-align: center;
+  font-weight: 800;
+  color: #0f172a;
 }
 
 .pizza-mod-modal {
@@ -4239,7 +4294,7 @@ button.lilpay-split-method-choice:focus-visible {
 }
 .micro-keyboard-actions {
   display: grid;
-  grid-template-columns: 1fr 1.4fr 1fr;
+  grid-template-columns: 1fr 0.8fr 1.4fr 1fr;
   gap: 6px;
   margin-top: 6px;
 }
@@ -4649,9 +4704,10 @@ button.lilpay-split-method-choice:focus-visible {
 
 .schedule-picker-shell {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
-  justify-content: space-between;
+  column-gap: 10px;
   min-height: 54px;
   padding: 0 14px;
   overflow: hidden;
@@ -4662,16 +4718,89 @@ button.lilpay-split-method-choice:focus-visible {
 }
 
 .schedule-picker-value {
-  font-size: 24px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  min-width: 0;
+}
+
+.schedule-picker-value--date {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 2px;
+  align-content: center;
+  justify-items: start;
+  inline-size: 100%;
   white-space: nowrap;
+  padding-left: 2px;
+}
+
+.schedule-date-weekday {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #334155;
+  line-height: 1;
+}
+
+.schedule-date-full {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.schedule-date-day {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.schedule-date-day-suffix {
+  font-size: 0.72em;
+  margin-left: 1px;
+  vertical-align: text-top;
+}
+
+.schedule-picker-value--time {
+  display: grid;
+  grid-template-columns: 2ch 0.9ch 2ch 3.1ch;
+  inline-size: calc(2ch + 0.9ch + 2ch + 3.1ch);
+  align-items: baseline;
+  justify-items: center;
+  gap: 0;
+  font-size: 24px;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.schedule-time-hours,
+.schedule-time-minutes,
+.schedule-time-colon,
+.schedule-time-suffix,
+.schedule-time-full {
+  display: block;
+  text-align: center;
+}
+
+.schedule-picker-value-text {
+  white-space: nowrap;
+  justify-self: start;
 }
 
 .schedule-picker-icon .nav-svg {
   width: 27px;
   height: 27px;
   stroke: #0f172a;
+}
+
+.schedule-picker-icon {
+  width: 27px;
+  min-width: 27px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .schedule-native-picker {

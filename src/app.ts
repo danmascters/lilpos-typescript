@@ -588,6 +588,7 @@ const state: any = {
     totalCents: 0,
     tipCents: 0,
     changeDueCents: 0,
+    allowMerchantCopy: false,
     source: 'new-sale' as 'new-sale' | 'orders-management',
     autoPrintTriggered: false,
     printingLocked: false,
@@ -1232,6 +1233,7 @@ const keyboardController = (() => {
         ], 'micro-keyboard-row micro-keyboard-row-7')}
         ${keyboardRowHtml([
           { label: 'Clear', value: 'clear', action: 'clear', sizeClass: 'micro-keyboard-action-key' },
+          { label: '.', value: '.', action: 'decimal', sizeClass: 'micro-keyboard-action-key' },
           { label: 'Space', value: ' ', action: 'space', sizeClass: 'micro-keyboard-action-key' },
           { label: 'Backspace', value: 'backspace', action: 'backspace', sizeClass: 'micro-keyboard-action-key' }
         ], 'micro-keyboard-actions')}
@@ -1280,7 +1282,7 @@ const keyboardController = (() => {
       <div class="micro-keyboard-numeric-grid" aria-hidden="true">
         ${rows.map((row) => keyboardRowHtml(row, 'micro-keyboard-numeric-row')).join('')}
         ${keyboardRowHtml(bottomRow, 'micro-keyboard-numeric-row')}
-        ${kind === 'decimal'
+        ${(kind === 'decimal' || kind === 'numeric')
           ? keyboardRowHtml([
               { label: '.', value: '.', action: 'decimal', sizeClass: 'micro-keyboard-numeric-action micro-keyboard-numeric-backspace' }
             ], 'micro-keyboard-numeric-row micro-keyboard-numeric-row-1')
@@ -1432,6 +1434,22 @@ const keyboardController = (() => {
     return getKeyboardInputKind(target) === 'decimal';
   }
 
+  function shouldForceAppendAtEnd(target) {
+    if (!target) return false;
+    if (activeInputKind === 'numeric' || activeInputKind === 'phone' || activeInputKind === 'pin') return true;
+    if (activeInputKind !== 'text') return false;
+
+    const context = String(target.getAttribute?.('data-keyboard-context') || '').toLowerCase();
+    if (context.includes('search')) return true;
+
+    const id = String(target.id || '').toLowerCase();
+    return id === 'query'
+      || id === 'customermgmtquery'
+      || id === 'ordersquery'
+      || id === 'modifiersearchinput'
+      || id === 'sdmsearch';
+  }
+
   function focusKeyboardTarget() {
     const target = resolveActiveKeyboardTarget();
     if (!target || !document.contains(target)) return null;
@@ -1449,6 +1467,14 @@ const keyboardController = (() => {
       setMoneyValueOnKeyboardTarget(target, (digits + text).slice(0, 9));
       return;
     }
+    if (shouldForceAppendAtEnd(target)) {
+      const value = String(target.value || '');
+      const nextValue = `${value}${text}`;
+      target.value = nextValue;
+      setTargetSelection(target, nextValue.length);
+      dispatchKeyboardInput(target);
+      return;
+    }
     const { value, start, end } = normalizeSelection(target);
     target.value = `${value.slice(0, start)}${text}${value.slice(end)}`;
     const nextCaret = start + text.length;
@@ -1462,6 +1488,15 @@ const keyboardController = (() => {
     if (isMoneyKeyboardTarget(target)) {
       const digits = currencyDigits(target.value || '');
       setMoneyValueOnKeyboardTarget(target, digits.slice(0, -1));
+      return;
+    }
+    if (shouldForceAppendAtEnd(target)) {
+      const value = String(target.value || '');
+      if (!value) return;
+      const nextValue = value.slice(0, -1);
+      target.value = nextValue;
+      setTargetSelection(target, nextValue.length);
+      dispatchKeyboardInput(target);
       return;
     }
     const { value, start, end } = normalizeSelection(target);
@@ -1606,10 +1641,10 @@ const keyboardController = (() => {
     if (action === 'decimal') {
       const target = focusKeyboardTarget();
       if (!target) return;
-      if (activeInputKind !== 'decimal') return;
+      if (activeInputKind === 'phone' || activeInputKind === 'pin') return;
       if (isMoneyKeyboardTarget(target)) return;
       const value = String(target.value || '');
-      if (value.includes('.')) return;
+      if ((activeInputKind === 'numeric' || activeInputKind === 'decimal') && value.includes('.')) return;
       insertTextIntoKeyboardTarget('.');
       refreshIntentChips();
       refreshIntentRailDom();
@@ -1713,6 +1748,15 @@ const keyboardController = (() => {
       return;
     }
     showKeyboardForInput(target, { source: 'render-sync', skipRememberSelection: true });
+    if (mode === 'micro' && document.activeElement !== target) {
+      target.focus({ preventScroll: true });
+      if (shouldForceAppendAtEnd(target)) {
+        const end = String(target.value || '').length;
+        setTargetSelection(target, end);
+      } else {
+        restoreSelectionForTarget(target);
+      }
+    }
   }
 
   function shouldKeepKeyboardOpenOnFocusOut(nextElement) {
@@ -2238,6 +2282,7 @@ function closeOrderNumberDialog() {
   state.orderNumberDialog.totalCents = 0;
   state.orderNumberDialog.tipCents = 0;
   state.orderNumberDialog.changeDueCents = 0;
+  state.orderNumberDialog.allowMerchantCopy = false;
   state.orderNumberDialog.source = 'new-sale';
   state.orderNumberDialog.autoPrintTriggered = false;
   state.orderNumberDialog.printingLocked = false;
@@ -2248,13 +2293,14 @@ function closeOrderNumberDialog() {
   state.orderNumberDialog.receiptPrintBaseUrl = '';
 }
 
-function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number; tipCents?: number; changeDueCents?: number; source?: 'new-sale' | 'orders-management' } = {}) {
+function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number; tipCents?: number; changeDueCents?: number; allowMerchantCopy?: boolean; source?: 'new-sale' | 'orders-management' } = {}) {
   state.orderNumberDialog.open = true;
   state.orderNumberDialog.orderNumber = orderNumber || '';
   state.orderNumberDialog.orderId = orderId || null;
   state.orderNumberDialog.totalCents = Number(opts.totalCents || 0);
   state.orderNumberDialog.tipCents = Math.max(0, Number(opts.tipCents || 0));
   state.orderNumberDialog.changeDueCents = Number(opts.changeDueCents || 0);
+  state.orderNumberDialog.allowMerchantCopy = !!opts.allowMerchantCopy;
   state.orderNumberDialog.source = opts.source || 'new-sale';
   state.orderNumberDialog.autoPrintTriggered = false;
   state.orderNumberDialog.printingLocked = false;
@@ -2267,8 +2313,16 @@ function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number
 }
 
 async function printOrderNumberReceipt(kind) {
-  if (kind !== 'customer_receipt' && kind !== 'reprint_customer_receipt') {
-    state.orderNumberDialog.receiptStatusMessage = 'Only customer receipt printing is available in this phase.';
+  const isCustomerReceipt = kind === 'customer_receipt' || kind === 'reprint_customer_receipt';
+  const isMerchantCopy = kind === 'merchant_copy' || kind === 'reprint_merchant_copy';
+  if (!isCustomerReceipt && !isMerchantCopy) {
+    state.orderNumberDialog.receiptStatusMessage = 'Only receipt copy printing actions are available in this phase.';
+    state.orderNumberDialog.receiptStatusTone = 'warn';
+    render();
+    return;
+  }
+  if (isMerchantCopy && !state.orderNumberDialog.allowMerchantCopy) {
+    state.orderNumberDialog.receiptStatusMessage = 'Merchant copy is only available for card payments.';
     state.orderNumberDialog.receiptStatusTone = 'warn';
     render();
     return;
@@ -2296,9 +2350,10 @@ async function printOrderNumberReceipt(kind) {
 
   const submit = await printJobService.submitCustomerReceipt({
     order,
-    isReprint: kind === 'reprint_customer_receipt',
+    isReprint: kind === 'reprint_customer_receipt' || kind === 'reprint_merchant_copy',
     reprintId: `manual_${uid()}`,
-    originalPrintJobId: state.orderNumberDialog.receiptPrintJobId || '',
+    originalPrintJobId: isCustomerReceipt ? (state.orderNumberDialog.receiptPrintJobId || '') : '',
+    requestedFrom: isMerchantCopy ? 'order_number_dialog_merchant_copy' : 'order_number_dialog',
     changeDue: Number(state.orderNumberDialog.changeDueCents || 0) / 100
   });
 
@@ -2313,7 +2368,8 @@ async function printOrderNumberReceipt(kind) {
   state.orderNumberDialog.receiptPrintJobId = String(submit.printJobId || '');
   state.orderNumberDialog.receiptPrintJobRefId = String(submit.localRef?.id || '');
   state.orderNumberDialog.receiptPrintBaseUrl = String(submit.baseUrl || '');
-  state.orderNumberDialog.receiptStatusMessage = submit.status === 'TRANSMITTED' ? 'Sent to printer' : 'Receipt queued';
+  const copyLabel = isMerchantCopy ? 'Merchant copy' : 'Receipt';
+  state.orderNumberDialog.receiptStatusMessage = submit.status === 'TRANSMITTED' ? `${copyLabel} sent to printer` : `${copyLabel} queued`;
   state.orderNumberDialog.receiptStatusTone = submit.status === 'TRANSMITTED' ? 'ok' : 'pending';
   state.orderNumberDialog.printingLocked = false;
   render();
@@ -2975,6 +3031,7 @@ async function handlePaymentPanePrimaryAction() {
           totalCents: orderTotalCents + tipCents,
           tipCents,
           changeDueCents: 0,
+          allowMerchantCopy: splitWorkspace.portions.some((portion) => portion.status === 'APPROVED' && portion.paymentMethod === 'card'),
           source: 'orders-management'
         });
       } else {
@@ -3510,6 +3567,11 @@ async function completePayNowOrder() {
     timingType: payload.timingType,
     asapTime: payload.asapTime,
     futureDateTime: payload.futureDateTime,
+    scheduledAtIso: payload.scheduledAtIso,
+    scheduledLocalDate: payload.scheduledLocalDate,
+    scheduledLocalTime: payload.scheduledLocalTime,
+    scheduledTimezoneOffsetMinutes: payload.scheduledTimezoneOffsetMinutes,
+    scheduledEpochMs: payload.scheduledEpochMs,
     orderSpecialInstructions: payload.orderSpecialInstructions,
     status: 'completed',
     paymentStatus: 'paid',
@@ -3568,6 +3630,11 @@ async function completePayNowOrder() {
         timingType: persistedOrder.timingType,
         asapTime: persistedOrder.asapTime,
         futureDateTime: persistedOrder.futureDateTime,
+        scheduledAtIso: persistedOrder.scheduledAtIso,
+        scheduledLocalDate: persistedOrder.scheduledLocalDate,
+        scheduledLocalTime: persistedOrder.scheduledLocalTime,
+        scheduledTimezoneOffsetMinutes: persistedOrder.scheduledTimezoneOffsetMinutes,
+        scheduledEpochMs: persistedOrder.scheduledEpochMs,
         orderSource: persistedOrder.orderSource,
         customer: persistedOrder.customer,
         paymentMethodSummary: persistedOrder.paymentMethodSummary
@@ -3626,10 +3693,15 @@ async function completePayNowOrder() {
   closePaymentDialog();
   closePayNowMissingDialog();
   resetTicketAfterPayment();
+  const hasCardPayment = (state.paymentDialog.paymentLines || []).some((line) => {
+    const normalized = String(line?.paymentType || '').toLowerCase();
+    return normalized.includes('card') || normalized.includes('credit') || normalized.includes('debit');
+  });
   openOrderNumberDialog(orderNumber, persistedOrder.id, {
     totalCents: Math.round(totals.amountDue * 100),
     tipCents: Math.round(totals.tipTotal * 100),
     changeDueCents: Math.round(totals.changeDue * 100),
+    allowMerchantCopy: hasCardPayment,
     source: 'new-sale'
   });
   state.orderSendLocked = false;
@@ -3666,6 +3738,11 @@ async function completePayLaterOrder() {
     timingType: payload.timingType,
     asapTime: payload.asapTime,
     futureDateTime: payload.futureDateTime,
+    scheduledAtIso: payload.scheduledAtIso,
+    scheduledLocalDate: payload.scheduledLocalDate,
+    scheduledLocalTime: payload.scheduledLocalTime,
+    scheduledTimezoneOffsetMinutes: payload.scheduledTimezoneOffsetMinutes,
+    scheduledEpochMs: payload.scheduledEpochMs,
     orderSpecialInstructions: payload.orderSpecialInstructions,
     status: 'open',
     paymentStatus: 'pay_later',
@@ -3717,6 +3794,11 @@ async function completePayLaterOrder() {
         timingType: persistedOrder.timingType,
         asapTime: persistedOrder.asapTime,
         futureDateTime: persistedOrder.futureDateTime,
+        scheduledAtIso: persistedOrder.scheduledAtIso,
+        scheduledLocalDate: persistedOrder.scheduledLocalDate,
+        scheduledLocalTime: persistedOrder.scheduledLocalTime,
+        scheduledTimezoneOffsetMinutes: persistedOrder.scheduledTimezoneOffsetMinutes,
+        scheduledEpochMs: persistedOrder.scheduledEpochMs,
         orderSource: persistedOrder.orderSource,
         customer: persistedOrder.customer,
         paymentMethodSummary: persistedOrder.paymentMethodSummary
@@ -3759,11 +3841,7 @@ async function completePayLaterOrder() {
 
   closePayLaterMissingDialog();
   resetTicketAfterPayment();
-  if (payload.orderType === 'togo' || payload.orderType === 'tostay') {
-    openOrderNumberDialog(orderNumber, persistedOrder.id);
-  } else {
-    alert(JSON.stringify(payload, null, 2).slice(0, 4000));
-  }
+  openOrderNumberDialog(orderNumber, persistedOrder.id);
   state.orderSendLocked = false;
   render();
 }
@@ -4271,6 +4349,48 @@ function scheduleTimeDisplayLabel(timeValue = state.scheduleDialog.time) {
   const suffix = parts.hour >= 12 ? 'PM' : 'AM';
   const hour12 = parts.hour % 12 || 12;
   return `${String(hour12).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')} ${suffix}`;
+}
+
+function dayOrdinalSuffix(day: number): string {
+  const value = Math.max(1, Math.min(31, Math.round(Number(day || 0))));
+  if (value % 100 >= 11 && value % 100 <= 13) return 'th';
+  if (value % 10 === 1) return 'st';
+  if (value % 10 === 2) return 'nd';
+  if (value % 10 === 3) return 'rd';
+  return 'th';
+}
+
+function scheduleDateDisplayMarkup(dateValue = state.scheduleDialog.date) {
+  const date = scheduleDateFromValue(dateValue);
+  if (!date) {
+    return `
+      <span class="schedule-date-weekday">DAY</span>
+      <span class="schedule-date-full">Choose date</span>
+    `;
+  }
+  const weekday = date.toLocaleDateString([], { weekday: 'short' }).toUpperCase();
+  const month = date.toLocaleDateString([], { month: 'long' }).toUpperCase();
+  const day = date.getDate();
+  const suffix = dayOrdinalSuffix(day);
+  const year = date.getFullYear();
+  return `
+    <span class="schedule-date-weekday">${h(weekday)}</span>
+    <span class="schedule-date-full">${h(month)} <span class="schedule-date-day">${day}</span><span class="schedule-date-day-suffix">${h(suffix)}</span>, <span class="schedule-date-year">${year}</span></span>
+  `;
+}
+
+function scheduleTimeDisplayMarkup(timeValue = state.scheduleDialog.time) {
+  const parts = scheduleTimeParts(timeValue);
+  if (!parts) return '<span class="schedule-time-full">Choose time</span>';
+  const suffix = parts.hour >= 12 ? 'PM' : 'AM';
+  const hour12 = String(parts.hour % 12 || 12).padStart(2, '0');
+  const minute = String(parts.minute).padStart(2, '0');
+  return `
+    <span class="schedule-time-hours">${h(hour12)}</span>
+    <span class="schedule-time-colon">:</span>
+    <span class="schedule-time-minutes">${h(minute)}</span>
+    <span class="schedule-time-suffix">${h(suffix)}</span>
+  `;
 }
 
 function setScheduleDateFromDate(date) {
@@ -5884,6 +6004,7 @@ async function completeSelectedOrderPaymentFromPane(paymentLine: any, behavior: 
           totalCents: totalCents + recordedTipCents,
           tipCents: recordedTipCents,
           changeDueCents,
+          allowMerchantCopy: String(paymentLine?.paymentType || '').toLowerCase().includes('card'),
           source: 'orders-management'
         });
       } else {
@@ -6872,10 +6993,34 @@ function getSendActionState(ticket, orderType) {
   };
 }
 
+function canonicalFutureScheduleFields(futureDateTime: any) {
+  const parsed = futureDateTime ? new Date(futureDateTime) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    return {
+      scheduledAtIso: null,
+      scheduledLocalDate: null,
+      scheduledLocalTime: null,
+      scheduledTimezoneOffsetMinutes: null,
+      scheduledEpochMs: null
+    };
+  }
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return {
+    scheduledAtIso: parsed.toISOString(),
+    scheduledLocalDate: `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`,
+    scheduledLocalTime: `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`,
+    scheduledTimezoneOffsetMinutes: -parsed.getTimezoneOffset(),
+    scheduledEpochMs: parsed.getTime()
+  };
+}
+
 function ticketPayload(kind: any): any {
   const orderTypeLabel = ORDER_TYPES[state.orderType] || state.orderType;
   const futureLabel = formatFutureLabel(state.futureDateTime);
   const timingType = state.timingType === 'future' && state.futureDateTime ? 'future' : 'asap';
+  const futureSchedule = timingType === 'future'
+    ? canonicalFutureScheduleFields(state.futureDateTime)
+    : canonicalFutureScheduleFields(null);
   const asapTimingLabel = state.asapTime ? `${orderTypeLabel} ${formatTimeValueLabel(state.asapTime)}` : 'ASAP';
   const futureOrderNote = timingType === 'future' ? (state.futureOrderNote || `Ready/Requested: ${futureLabel}`) : `Ready/Requested: ${asapTimingLabel}`;
 
@@ -6919,6 +7064,11 @@ function ticketPayload(kind: any): any {
     timingType,
     asapTime: timingType === 'asap' && state.asapTime ? state.asapTime : null,
     futureDateTime: timingType === 'future' ? state.futureDateTime : null,
+    scheduledAtIso: timingType === 'future' ? futureSchedule.scheduledAtIso : null,
+    scheduledLocalDate: timingType === 'future' ? futureSchedule.scheduledLocalDate : null,
+    scheduledLocalTime: timingType === 'future' ? futureSchedule.scheduledLocalTime : null,
+    scheduledTimezoneOffsetMinutes: timingType === 'future' ? futureSchedule.scheduledTimezoneOffsetMinutes : null,
+    scheduledEpochMs: timingType === 'future' ? futureSchedule.scheduledEpochMs : null,
     futureOrderNote,
     orderSpecialInstructions: state.orderSpecialInstructions,
     printTimingNote: timingType === 'future' ? `FUTURE ORDER\nReady/Requested: ${futureLabel}` : `Ready/Requested: ${asapTimingLabel}`,
@@ -7126,6 +7276,7 @@ function openItem(id) {
     pizzaFilter: 'ALL',
     pizzaNav: 'pizza',
     pizzaNotes: '',
+    itemQty: 1,
     editingLineId: null
   };
   state.modifierDialogInitialConfig = cloneDialogConfig(state.selectedConfig);
@@ -7270,6 +7421,7 @@ function findExactCartLineMatch(item, configured) {
 function addItem(item, configured) {
   if (isItemOutOfStock(item)) return;
   const price = configured?.price ?? (item.fixedPrice ? item.basePrice : item.sizeSchema?.[0]?.price || item.basePrice);
+  const qty = Math.max(1, Math.round(Number(configured?.qty || 1)));
   if (configured?.editingLineId) {
     const line = state.cart.find((entry) => entry.lineId === configured.editingLineId);
     if (line) {
@@ -7278,6 +7430,7 @@ function addItem(item, configured) {
       line.size = configured?.size;
       line.mods = configured?.mods || [];
       line.price = price;
+      line.qty = qty;
       if (typeof configured.specialInstruction === 'string') line.specialInstruction = configured.specialInstruction;
     }
   } else {
@@ -7286,7 +7439,7 @@ function addItem(item, configured) {
       price
     });
     if (matchingLine) {
-      matchingLine.qty = Math.max(1, Number(matchingLine.qty || 1) + 1);
+      matchingLine.qty = Math.max(1, Number(matchingLine.qty || 1) + qty);
       state.scrollCartOnAdd = true;
       state.selected = null;
       render();
@@ -7298,7 +7451,7 @@ function addItem(item, configured) {
       name: item.name,
       size: configured?.size,
       mods: configured?.mods || [],
-      qty: 1,
+      qty,
       price,
       specialInstruction: configured?.specialInstruction || '',
       forName: ''
@@ -7341,6 +7494,7 @@ function openLineItemEditor(lineId) {
     pizzaFilter: 'ALL',
     pizzaNav: 'pizza',
     pizzaNotes: line.specialInstruction || '',
+    itemQty: Math.max(1, Number(line.qty || 1)),
     editingLineId: line.lineId
   };
   state.modifierDialogInitialConfig = cloneDialogConfig(state.selectedConfig);
@@ -8476,6 +8630,13 @@ function selectedOrderLiveTipCents(order) {
   );
 }
 
+function activeTicketLiveCardTipCents() {
+  if (!state.paymentPaneState || !state.paymentPaneInput) return 0;
+  if (state.paymentPaneInput.paymentContextSource !== 'active-ticket') return 0;
+  if (state.paymentPaneState.selectedPaymentMethod !== 'card') return 0;
+  return Math.max(0, Number(state.paymentPaneState.cardTipAmountCents || 0));
+}
+
 function renderOrderDetailInTicketPane() {
   const order = selectedOrderForDetail();
   if (!order) return '';
@@ -8555,6 +8716,11 @@ function ticketPanelHtml() {
   const detailOrder = selectedOrderForDetail();
   const showSelectedOrderPayButtons = selectedOrderPaymentEligible(detailOrder);
   const selectedOrderBalance = showSelectedOrderPayButtons ? selectedOrderRemainingBalanceCents(detailOrder) / 100 : 0;
+  const liveActiveCardTipCents = activeTicketLiveCardTipCents();
+  const activeTicketSubtotal = cartTotal();
+  const activeTicketTax = ticketTax();
+  const activeTicketBaseTotalCents = Math.round(ticketGrandTotal() * 100);
+  const activeTicketDisplayTotalCents = activeTicketBaseTotalCents + liveActiveCardTipCents;
   const showOrderSpecialInstructions = isNewOrderState();
   const sendState = getSendActionState(state.cart, state.orderType);
   const canCancelSale = state.cart.length > 0;
@@ -8568,7 +8734,7 @@ function ticketPanelHtml() {
       <div class="ticket-panel-fixed ${viewingPreviousOrder ? 'is-hidden' : ''}">
         <div class="ticket-total-row ticket-section">
           <button id="newSaleBtn" class="btn-new-sale">New Sale</button>
-          <div class="ticket-total-display">${money(ticketGrandTotal())}</div>
+          <div class="ticket-total-display">${money(activeTicketDisplayTotalCents / 100)}</div>
         </div>
         <div class="ticket-head ticket-section">
           <div class="timing-wrap">
@@ -8664,9 +8830,10 @@ function ticketPanelHtml() {
           <div class="ticket-footer ticket-section">
             ${showOrderSpecialInstructions ? `<div id="orderSpecialInstructionsLive" class="order-special-live ${state.orderSpecialInstructions ? '' : 'is-hidden'}">${state.orderSpecialInstructions ? `Special Instructions: ${h(state.orderSpecialInstructions)}` : ''}</div>` : ''}
             <div class="totals">
-              <div><span>Subtotal</span><b>${money(cartTotal())}</b></div>
-              <div><span>Tax</span><b>${money(ticketTax())}</b></div>
-              <div class="grand"><span>Total</span><b>${money(ticketGrandTotal())}</b></div>
+              <div><span>Subtotal</span><b>${money(activeTicketSubtotal)}</b></div>
+              <div><span>Tax</span><b>${money(activeTicketTax)}</b></div>
+              ${liveActiveCardTipCents > 0 ? `<div><span>Tip</span><b>${money(liveActiveCardTipCents / 100)}</b></div>` : ''}
+              <div class="grand"><span>Total</span><b>${money(activeTicketDisplayTotalCents / 100)}</b></div>
             </div>
             <div class="ticket-actions primary-actions">
               <button id="sendPayNow" class="btn-pay-now" ${sendState.payNow.ok ? '' : 'disabled'}>Send &amp; Pay Now</button>
@@ -8694,7 +8861,7 @@ function scheduleDialogHtml() {
           <div class="schedule-field-group">
             <span class="schedule-field-label">Date</span>
             <div class="schedule-picker-shell">
-              <span class="schedule-picker-value">${h(scheduleDateDisplayLabel())}</span>
+              <span class="schedule-picker-value schedule-picker-value--date">${scheduleDateDisplayMarkup()}</span>
               <span class="schedule-picker-icon" aria-hidden="true">${navIcon('calendar')}</span>
               <input id="scheduleDate" class="schedule-native-picker" aria-label="Future order date" type="date" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.scheduleDialog.date)}" />
             </div>
@@ -8707,7 +8874,7 @@ function scheduleDialogHtml() {
           <div class="schedule-field-group">
             <span class="schedule-field-label">Time</span>
             <div class="schedule-picker-shell">
-              <span class="schedule-picker-value">${h(scheduleTimeDisplayLabel())}</span>
+              <span class="schedule-picker-value schedule-picker-value--time">${scheduleTimeDisplayMarkup()}</span>
               <span class="schedule-picker-icon" aria-hidden="true">${navIcon('clock')}</span>
               <input id="scheduleTime" class="schedule-native-picker" aria-label="Future order time" type="time" inputmode="none" virtualkeyboardpolicy="manual" value="${h(state.scheduleDialog.time)}" />
             </div>
@@ -8762,6 +8929,7 @@ function orderNumberDialogHtml() {
   const receiptEnabled = !!printerSettings?.receiptPrintingEnabled;
   const autoPrint = receiptEnabled && !!printerSettings?.autoPrintReceiptAfterSale;
   const showPromptButtons = receiptEnabled && !autoPrint && !!printerSettings?.promptForReceiptAfterSale;
+  const showMerchantCopyButton = receiptEnabled && !!dlg.allowMerchantCopy;
   const showPaymentInfo = dlg.totalCents > 0;
   const displayNumber = dlg.orderNumber ? formatOrderNumberForDisplay(dlg.orderNumber) : '';
   const fmtCents = (cents: number) => money(cents / 100);
@@ -8794,11 +8962,9 @@ function orderNumberDialogHtml() {
         `}
         ${receiptEnabled ? `
           <div class="call-modal-actions order-number-actions">
-            ${showPromptButtons
-              ? `<button id="orderPrintCustomer" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>Print Receipt</button>
-                 <button id="orderNoReceipt" class="btn-secondary">No Receipt</button>`
-              : `<button id="orderPrintCustomer" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>${dlg.receiptPrintJobId ? 'Reprint Receipt' : 'Print Receipt'}</button>`
-            }
+            <button id="orderPrintCustomer" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>${showPromptButtons ? 'Print Receipt' : (dlg.receiptPrintJobId ? 'Reprint Receipt' : 'Print Receipt')}</button>
+            ${showMerchantCopyButton ? `<button id="orderPrintMerchant" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>Print Merchant Copy</button>` : ''}
+            <button id="orderNoReceipt" class="btn-secondary">No Receipt</button>
           </div>
         ` : ''}
         ${dlg.receiptStatusMessage ? `<p class="order-receipt-status ${dlg.receiptStatusTone || ''}">${h(dlg.receiptStatusMessage)}</p>` : ''}
@@ -9214,6 +9380,8 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
   const basePrice = item.fixedPrice ? item.basePrice : item.sizeSchema?.find((s) => s.name === size)?.price || item.basePrice;
   const modsPrice = selectedModifierTotal();
   const total = +(basePrice + modsPrice).toFixed(2);
+  const qty = selectedModifierItemQty();
+  const lineTotal = +(total * qty).toFixed(2);
   const pizzaDone = !!size || pizzaGroupHasSelections(pizzaGroup.id);
   const prepDone = pizzaPrepHasSelections(groups, pizzaGroup.id);
   const notesDone = !!(state.selectedConfig.pizzaNotes || '').trim();
@@ -9357,8 +9525,13 @@ function pizzaModifierModalHtml(item, groups, pizzaGroup) {
           </div>
         </div>
         <footer>
-          <b>Base ${money(basePrice)} | Mods ${money(modsPrice)} | Total ${money(total)}</b>
-          <button id="addToTicket" class="btn-success">${state.selectedConfig.editingLineId ? 'Update item' : 'Add to ticket'}</button>
+          <div class="modifier-footer-left">
+            <b>Base ${money(basePrice)} | Mods ${money(modsPrice)} | Each ${money(total)} | Qty ${qty} | Total ${money(lineTotal)}</b>
+          </div>
+          <div class="modifier-footer-actions">
+            ${modifierQtyJoggerHtml()}
+            <button id="addToTicket" class="btn-success">${state.selectedConfig.editingLineId ? 'Update item' : 'Add to ticket'}</button>
+          </div>
         </footer>
       </div>
     </div>
@@ -9372,6 +9545,9 @@ function modalHtml(item) {
     return pizzaModifierModalHtml(item, groups, pizzaGroup);
   }
   const size = state.selectedConfig.size || item.sizeSchema?.[0]?.name || null;
+  const qty = selectedModifierItemQty();
+  const unitBasePrice = item.fixedPrice ? item.basePrice : item.sizeSchema?.find((s) => s.name === size)?.price || item.basePrice;
+  const lineTotal = +(unitBasePrice * qty).toFixed(2);
 
   const canUndo = !!(state.modifierDialogHistory?.past?.length);
   const canRedo = !!(state.modifierDialogHistory?.future?.length);
@@ -9430,10 +9606,30 @@ function modalHtml(item) {
           }).join('')}
         </div>
         <footer>
-          <b>Base ${money(item.fixedPrice ? item.basePrice : item.sizeSchema?.find((s) => s.name === size)?.price || item.basePrice)}</b>
-          <button id="addToTicket" class="btn-success">Add to ticket</button>
+          <div class="modifier-footer-left">
+            <b>Each ${money(unitBasePrice)} | Qty ${qty} | Total ${money(lineTotal)}</b>
+          </div>
+          <div class="modifier-footer-actions">
+            ${modifierQtyJoggerHtml()}
+            <button id="addToTicket" class="btn-success">Add to ticket</button>
+          </div>
         </footer>
       </div>
+    </div>
+  `;
+}
+
+function selectedModifierItemQty() {
+  return Math.max(1, Math.min(99, Math.round(Number(state.selectedConfig?.itemQty || 1))));
+}
+
+function modifierQtyJoggerHtml() {
+  const qty = selectedModifierItemQty();
+  return `
+    <div class="modifier-qty-jogger" role="group" aria-label="Item quantity">
+      <button type="button" class="modifier-qty-btn" data-mod-qty-adjust="-1" aria-label="Decrease item quantity" ${qty <= 1 ? 'disabled' : ''}>-</button>
+      <output class="modifier-qty-value" aria-live="polite" aria-label="Quantity ${qty}">${qty}</output>
+      <button type="button" class="modifier-qty-btn" data-mod-qty-adjust="1" aria-label="Increase item quantity" ${qty >= 99 ? 'disabled' : ''}>+</button>
     </div>
   `;
 }
@@ -9567,7 +9763,13 @@ function updateSearchQuery(next, cursorPos, preserveFocus = true) {
   }
   state.searchRefocus = !!preserveFocus;
   if (preserveFocus) {
-    state.searchCursorPos = typeof cursorPos === 'number' ? cursorPos : next.length;
+    const activeInput = keyboardController.getActiveInput();
+    const forceEndForMenuSearch = keyboardController.getKeyboardMode() === 'micro'
+      && !!activeInput
+      && String(activeInput.id || '').toLowerCase() === 'query';
+    state.searchCursorPos = forceEndForMenuSearch
+      ? next.length
+      : (typeof cursorPos === 'number' ? cursorPos : next.length);
   }
   render();
 }
@@ -11185,6 +11387,7 @@ function attachEvents() {
   $('#newSaleContinue')?.addEventListener('click', cancelSaleConfirmed);
 
   $('#orderPrintCustomer')?.addEventListener('click', () => printOrderNumberReceipt('customer_receipt'));
+  $('#orderPrintMerchant')?.addEventListener('click', () => printOrderNumberReceipt('merchant_copy'));
   $('#orderNoReceipt')?.addEventListener('click', () => {
     const source = state.orderNumberDialog.source;
     closeOrderNumberDialog();
@@ -11357,12 +11560,28 @@ function attachEvents() {
     const basePrice = item.fixedPrice ? item.basePrice : item.sizeSchema?.find((s) => s.name === size)?.price || item.basePrice;
     const modifiersPrice = itemUsesCustomPizzaModifierUi(item) ? +(mods as any[]).reduce((sum: number, entry: any) => sum + Number(entry.price || 0), 0).toFixed(2) : 0;
     const price = +(basePrice + modifiersPrice).toFixed(2);
+    const qty = selectedModifierItemQty();
     addItem(item, {
       size,
       mods,
       price,
+      qty,
       editingLineId: state.selectedConfig.editingLineId,
       specialInstruction: itemUsesCustomPizzaModifierUi(item) ? (state.selectedConfig.pizzaNotes || '') : undefined
+    });
+  });
+
+  document.querySelectorAll('[data-mod-qty-adjust]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!state.selectedConfig) return;
+      const delta = Number((btn as HTMLElement).dataset.modQtyAdjust || 0);
+      if (!delta) return;
+      snapshotDialogState();
+      const current = selectedModifierItemQty();
+      const next = Math.max(1, Math.min(99, current + delta));
+      if (next === current) return;
+      state.selectedConfig.itemQty = next;
+      render();
     });
   });
 

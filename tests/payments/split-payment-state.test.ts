@@ -21,12 +21,12 @@ describe('split payment state', () => {
     };
   }
 
-  it('creates default workspace and pending portion for full remaining', () => {
+  it('creates default workspace with at least two pending portions', () => {
     const ws = state().createSplitWorkspace(baseInput());
     expect(ws.remainingCents).toBe(7750);
-    expect(ws.portions.length).toBe(1);
-    expect(ws.portions[0].plannedAmountCents).toBe(7750);
-    expect(ws.portions[0].status).toBe('PENDING');
+    const pending = ws.portions.filter((portion: any) => portion.status === 'PENDING');
+    expect(pending.length).toBeGreaterThanOrEqual(2);
+    expect(pending.reduce((sum: number, portion: any) => sum + portion.plannedAmountCents, 0)).toBe(7750);
   });
 
   it('adds custom portions and keeps remaining in sync', () => {
@@ -65,6 +65,17 @@ describe('split payment state', () => {
     ws = state().splitGenerateEvenPortions(ws, 'card');
     expect(ws.portions.filter((portion: any) => portion.status === 'PENDING')).toHaveLength(50);
     expect(ws.portions.reduce((sum: number, portion: any) => sum + portion.plannedAmountCents, 0)).toBe(7750);
+  });
+
+  it('does not allow removing pending rows below two before approval', () => {
+    let ws = state().createSplitWorkspace(baseInput());
+    const pending = ws.portions.filter((portion: any) => portion.status === 'PENDING');
+    expect(pending.length).toBeGreaterThanOrEqual(2);
+
+    ws = state().splitRemovePendingPortion(ws, pending[0].id);
+    const remainingPending = ws.portions.filter((portion: any) => portion.status === 'PENDING' || portion.status === 'DECLINED');
+    expect(remainingPending.length).toBeGreaterThanOrEqual(2);
+    expect(remainingPending.reduce((sum: number, portion: any) => sum + portion.plannedAmountCents, 0)).toBe(7750);
   });
 
   it('declined cards do not reduce balance and approved portions remain approved', () => {

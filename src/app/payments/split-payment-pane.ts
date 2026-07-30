@@ -21,7 +21,12 @@ function splitNextPaymentMethod(method: SplitPortionPaymentMethod): SplitPortion
   return 'cash';
 }
 
-function splitPortionLineHtml(portion: SplitPaymentPortionRuntime, selectedPortionId: string | null): string {
+function splitPortionLineHtml(
+  portion: SplitPaymentPortionRuntime,
+  selectedPortionId: string | null,
+  editableCount: number,
+  approvedCount: number
+): string {
   const selected = portion.id === selectedPortionId;
   const methodLabel = portion.status === 'APPROVED' && portion.finalPaymentMethodLabel
     ? portion.finalPaymentMethodLabel
@@ -31,6 +36,7 @@ function splitPortionLineHtml(portion: SplitPaymentPortionRuntime, selectedPorti
   const tipAmount = formatCents(portion.tipAmountCents || 0);
   const canEdit = portion.status === 'PENDING' || portion.status === 'DECLINED';
   const canProcess = canEdit;
+  const canRemove = canEdit && !(approvedCount === 0 && editableCount <= 2);
   const statusLabel = portion.status === 'APPROVED' ? 'PAID' : portion.status.replace(/_/g, ' ');
   const nextMethodLabel = window.LilposSplitPaymentMath.splitDisplayMethodLabel(splitNextPaymentMethod(portion.paymentMethod));
   const methodControl = canEdit
@@ -66,7 +72,7 @@ function splitPortionLineHtml(portion: SplitPaymentPortionRuntime, selectedPorti
       ${canEdit ? `
         <div class="lilpay-split-portion-actions">
           <button type="button" class="lilpay-action-btn lilpay-split-process-btn" data-lilpay-split-process="${portion.id}" ${canProcess ? '' : 'disabled'}>Process</button>
-          <button type="button" class="lilpay-split-remove-btn" data-lilpay-split-remove="${portion.id}" aria-label="Remove payment portion ${portion.sequence}" title="Remove payment portion">×</button>
+          <button type="button" class="lilpay-split-remove-btn" data-lilpay-split-remove="${portion.id}" aria-label="Remove payment portion ${portion.sequence}" title="Remove payment portion" ${canRemove ? '' : 'disabled'}>×</button>
         </div>
       ` : ''}
       ${portion.status === 'DECLINED' ? `
@@ -91,6 +97,8 @@ function splitEvenCountJoggerHtml(current: number): string {
 
 function splitPaymentPaneHtml(input: PaymentPaneInput, state: PaymentPaneState): string {
   const workspace = state.splitWorkspace || window.LilposSplitPaymentState.createSplitWorkspace(input);
+  const editableCount = workspace.portions.filter((portion) => portion.status === 'PENDING' || portion.status === 'DECLINED').length;
+  const approvedCount = workspace.portions.filter((portion) => portion.status === 'APPROVED').length;
 
   return `
     <section class="lilpay-center-card lilpay-split-pane" aria-label="Split payment workspace">
@@ -106,7 +114,7 @@ function splitPaymentPaneHtml(input: PaymentPaneInput, state: PaymentPaneState):
       </div>
 
       <div class="lilpay-split-plan-list">
-        ${workspace.portions.map((portion) => splitPortionLineHtml(portion, workspace.selectedPortionId)).join('')}
+        ${workspace.portions.map((portion) => splitPortionLineHtml(portion, workspace.selectedPortionId, editableCount, approvedCount)).join('')}
       </div>
 
       <div class="lilpay-split-footnote">Each approved portion is recorded as its own payment record. Tips on cards are tracked per transaction.</div>
