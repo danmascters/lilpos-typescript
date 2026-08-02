@@ -29,6 +29,7 @@
     money: (value: any) => string;
     formatOrderNumberForDisplay: (value: any) => string;
     paymentBadgeForOrder: (order: any) => { paidClass: string; paidText: string };
+    orderTypeIconHtml?: (orderType: any, options?: any) => string;
     columnLayout?: OrdersQueueColumnLayout;
     hiddenColumnIds?: string[];
   };
@@ -251,6 +252,10 @@
     var orderTypes = input.orderTypes || {};
     var formatOrderNumberForDisplay = input.formatOrderNumberForDisplay;
     var paymentBadgeForOrder = input.paymentBadgeForOrder;
+    var orderTypeIconHtml = input.orderTypeIconHtml || function(orderType: any, options?: any) {
+      var label = options && options.label || orderTypes[orderType] || orderType || 'Order type';
+      return '<span class="order-type-icon order-type-icon-inline" role="img" aria-label="' + h(label) + '" title="' + h(label) + '">&#127858;</span>';
+    };
     var columnLayout = normalizeColumnLayout(input.columnLayout);
     var hiddenColumns: any = {};
     (Array.isArray(input.hiddenColumnIds) ? input.hiddenColumnIds : []).forEach(function(columnId) {
@@ -259,11 +264,27 @@
     var columns = columnLayout.order.map(function(columnId) { return COLUMN_BY_ID[columnId]; }).filter(function(column) {
       return !!column && !hiddenColumns[column.id];
     });
-    var style = '--orders-row-columns:' + columns.map(function(column) { return 'var(--orders-col-' + column.id + ')'; }).join(' ') + ';';
+    function withTypeIconAfterOrder(values: string[]): string[] {
+      var output: string[] = [];
+      values.forEach(function(value, index) {
+        output.push(value);
+        if (columns[index] && columns[index].id === 'order') output.push('TYPE_ICON_PLACEHOLDER');
+      });
+      return output;
+    }
+
+    var columnTracks = withTypeIconAfterOrder(columns.map(function(column) { return 'var(--orders-col-' + column.id + ')'; }))
+      .map(function(value) { return value === 'TYPE_ICON_PLACEHOLDER' ? 'var(--orders-col-typeIcon)' : value; });
+    var style = '--orders-row-columns:' + columnTracks.join(' ') + ';';
 
     return '<div class="orders-mgmt-rows" role="list" style="' + h(style) + '">'
       + '<div class="orders-mgmt-row orders-mgmt-row-head">'
-      + columns.map(function(column) { return renderHeaderCell(column, columnLayout.sort, h); }).join('')
+      + withTypeIconAfterOrder(columns.map(function(column) { return renderHeaderCell(column, columnLayout.sort, h); }))
+        .map(function(value) {
+          return value === 'TYPE_ICON_PLACEHOLDER'
+            ? '<span class="orders-row-head-cell orders-row-type-icon-head" aria-label="Order type"></span>'
+            : value;
+        }).join('')
       + '</div>'
       + rows.map(function(order) {
         var typeLabel = orderTypes[order.orderType] || order.orderType || 'Order';
@@ -290,11 +311,17 @@
           customerTitle: customerTitle,
           customerMeta: customerMeta,
           typeLabel: typeLabel,
+          typeIcon: orderTypeIconHtml(order.orderType, { label: typeLabel }),
           receivedTimeLabel: receivedTimeLabel,
           dueTimeLabel: dueTimeLabel
         };
         return '<button type="button" class="orders-mgmt-row" role="listitem" data-open-order="' + h(order.id) + '">'
-          + columns.map(function(column) { return rowCellHtml(column.id, order, display, h, money); }).join('')
+          + withTypeIconAfterOrder(columns.map(function(column) { return rowCellHtml(column.id, order, display, h, money); }))
+            .map(function(value) {
+              return value === 'TYPE_ICON_PLACEHOLDER'
+                ? '<span class="orders-row-type-icon">' + display.typeIcon + '</span>'
+                : value;
+            }).join('')
           + '</button>';
       }).join('')
       + '</div>';

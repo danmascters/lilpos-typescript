@@ -589,6 +589,13 @@
           lastSuccessfulConnectionAt: String(row.lastSuccessfulConnectionAt || row.lastConnectedAt || ''),
           lastTransmittedAt: String(row.lastTransmittedAt || '')
         };
+      }).filter(function(printer: any) {
+        // Hide disposable test fixtures from discovery UI.
+        var name = String(printer.name || '').toLowerCase();
+        var id = String(printer.id || '').toLowerCase();
+        if (name.indexOf('codex') >= 0) return false;
+        if (id.indexOf('codex') >= 0) return false;
+        return true;
       });
     }
 

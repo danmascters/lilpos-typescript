@@ -1,0 +1,150 @@
+/**
+ * Security Idle Lock
+ *
+ * LilPOS idle timer that locks the screen with the PIN pad after
+ * a configurable period of inactivity. Only activates when both
+ * PIN Code Enabled and Screen Idle Timer are enabled.
+ *
+ * Integrates with the existing PIN pad flow (managerPin view).
+ */
+
+export type IdleLockDeps = {
+  /** Returns whether PIN code is enabled */
+  isPinEnabled: () => boolean;
+  /** Returns whether screen idle timer is enabled */
+  isIdleTimerEnabled: () => boolean;
+  /** Returns the idle timeout in seconds */
+  getTimeoutSeconds: () => number;
+  /** Returns whether the user is currently typing on the custom keyboard */
+  isKeyboardActive: () => boolean;
+  /** Returns whether the PIN pad / lock screen is already visible */
+  isPinPadVisible: () => boolean;
+  /** Function to show the PIN pad / lock screen */
+  showPinPad: () => void;
+  /** Logger function */
+  log?: (msg: string) => void;
+};
+
+export function createIdleLock(deps: IdleLockDeps) {
+  let timerId: ReturnType<typeof setTimeout> | null = null;
+  let started = false;
+  let locked = false;
+
+  const log = deps.log || (() => {});
+
+  function clearTimer() {
+    if (timerId !== null) {
+      clearTimeout(timerId);
+      timerId = null;
+    }
+  }
+
+  function scheduleTimer() {
+    clearTimer();
+    if (!deps.isPinEnabled() || !deps.isIdleTimerEnabled()) {
+      log('[IdleLock] Skipping timer: PIN or idle timer disabled');
+      locked = false;
+      return;
+    }
+    const seconds = deps.getTimeoutSeconds();
+    if (seconds <= 0) {
+      log('[IdleLock] Skipping timer: timeout <= 0');
+      return;
+    }
+    log(`[IdleLock] Scheduling timer for ${seconds}s`);
+    timerId = setTimeout(() => {
+      log('[IdleLock] Timer expired');
+      if (!deps.isPinEnabled() || !deps.isIdleTimerEnabled()) {
+        log('[IdleLock] Skipping lock: PIN or idle timer no longer enabled');
+        locked = false;
+        return;
+      }
+      if (deps.isKeyboardActive()) {
+        log('[IdleLock] Skipping lock: keyboard active, rescheduling');
+        scheduleTimer();
+        return;
+      }
+      if (deps.isPinPadVisible()) {
+        log('[IdleLock] Skipping lock: PIN pad already visible');
+        locked = true;
+        return;
+      }
+      log('[IdleLock] Locking screen');
+      locked = true;
+      deps.showPinPad();
+    }, seconds * 1000);
+  }
+
+  function onActivity() {
+    if (!deps.isPinEnabled() || !deps.isIdleTimerEnabled()) {
+      if (timerId !== null) {
+        clearTimer();
+        locked = false;
+      }
+      return;
+    }
+    // If locked and user is active, don't reset timer unless unlocked
+    if (locked) return;
+    scheduleTimer();
+  }
+
+  function start() {
+    if (started) return;
+    started = true;
+    locked = false;
+    log('[IdleLock] Starting');
+
+    // Register activity listeners
+    const activityEvents = ['pointerdown', 'click', 'keydown', 'touchstart'];
+    for (const eventType of activityEvents) {
+      document.addEventListener(eventType, onActivity, { passive: true, capture: true });
+    }
+
+    // Initial schedule
+    scheduleTimer();
+  }
+
+  function stop() {
+    if (!started) return;
+    started = false;
+    locked = false;
+    clearTimer();
+
+    const activityEvents = ['pointerdown', 'click', 'keydown', 'touchstart'];
+    for (const eventType of activityEvents) {
+      document.removeEventListener(eventType, onActivity, { capture: true } as any);
+    }
+
+    log('[IdleLock] Stopped');
+  }
+
+  function refresh() {
+    // Called when settings change to re-evaluate
+    log('[IdleLock] Refresh');
+    if (!deps.isPinEnabled() || !deps.isIdleTimerEnabled()) {
+      clearTimer();
+      locked = false;
+      return;
+    }
+    locked = false;
+    scheduleTimer();
+  }
+
+  function isLocked(): boolean {
+    return locked;
+  }
+
+  function unlock() {
+    locked = false;
+    scheduleTimer();
+  }
+
+  return {
+    start,
+    stop,
+    refresh,
+    isLocked,
+    unlock,
+    onActivity
+  };
+}

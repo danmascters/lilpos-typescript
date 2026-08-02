@@ -9,6 +9,7 @@ const APP_SHELL = [
     './dist/admin/station-data-manager.js',
     './dist/admin/station-data-manager.view.js',
     './dist/app/orders-management-view.js',
+    './dist/direct-printer-test.js',
     './dist/app.js',
     './manifest.webmanifest',
     './icons/icon-192.png',

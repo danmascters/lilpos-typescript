@@ -193,10 +193,43 @@
       return Array.isArray(rows) ? rows : [];
     }
 
+    async function legacyReceiptPrinterFromSettings(printerId: string, settings: PrinterSettingsRecord): Promise<any> {
+      var id = String(printerId || '').trim();
+      if (!id) return null;
+      var defaultReceiptId = String(settings.defaultReceiptPrinterId || settings.receiptPrinterId || '').trim();
+      if (id !== defaultReceiptId) return null;
+      if (dataService && typeof dataService.getPosPrinterConfigById === 'function') {
+        var existing = await dataService.getPosPrinterConfigById(id);
+        if (existing) return null;
+      }
+      if (!String(settings.receiptPrinterIp || '').trim() || !(Number(settings.receiptPrinterPort || 0) > 0)) return null;
+      return {
+        id: id,
+        name: String(settings.receiptPrinterName || 'Receipt Printer'),
+        enabled: true,
+        primaryRole: 'receipt',
+        secondaryRoles: settings.openCashDrawerWithCashSale ? ['cash_drawer'] : [],
+        ip: String(settings.receiptPrinterIp || ''),
+        port: Number(settings.receiptPrinterPort || 9100),
+        connectionType: 'network_printer',
+        printMode: 'raw_escpos',
+        transport: 'tcp_9100',
+        profile: String(settings.receiptPrinterProfile || 'generic_escpos_thermal'),
+        paperWidth: settings.paperWidth,
+        charactersPerLine: settings.charactersPerLine,
+        defaultCopies: settings.copies,
+        retryEnabled: settings.retryEnabled !== false,
+        maxAttempts: Math.max(1, Number(settings.maxAttempts || 5)),
+        cutPaper: settings.cutPaperAfterReceipt,
+        cashDrawerConnected: settings.openCashDrawerWithCashSale
+      };
+    }
+
     async function resolveDestinations(inputRoute: any): Promise<any[]> {
       var order = inputRoute && inputRoute.order;
       var trigger = String(inputRoute && inputRoute.trigger || 'sale_completed');
       var settings = inputRoute && inputRoute.settings;
+      var suppressFallback = inputRoute && inputRoute.suppressFallback === true;
       var scope = {
         merchantId: String(inputRoute && inputRoute.merchantId || settings.merchantId || ''),
         locationId: String(inputRoute && inputRoute.locationId || settings.locationId || '')
@@ -214,6 +247,7 @@
         if (Array.isArray(routed) && routed.length) return routed;
       }
 
+      if (suppressFallback) return [];
       var fallback = defaultReceiptDestination(settings);
       return fallback ? [fallback] : [];
     }
@@ -252,7 +286,7 @@
       if (!order) return { ok: false, message: 'Order snapshot is required.' };
 
       var settings = await resolveSettings(inputReceipt && inputReceipt.settingsScope);
-      if (!settings.receiptPrintingEnabled) return { ok: false, skipped: true, message: 'Receipt printing is disabled.' };
+      if (inputReceipt && inputReceipt.bypassReceiptPrintingEnabled !== true && !settings.receiptPrintingEnabled) return { ok: false, skipped: true, message: 'Receipt printing is disabled.' };
 
       var merchantId = String((inputReceipt && inputReceipt.merchantId) || (dataService && dataService.getMerchantId && dataService.getMerchantId()) || settings.merchantId || 'local-merchant');
       var locationId = String((inputReceipt && inputReceipt.locationId) || (dataService && dataService.getLocationId && dataService.getLocationId()) || settings.locationId || 'local-location');
@@ -264,6 +298,7 @@
       var isReprint = inputReceipt && inputReceipt.isReprint === true;
       var reprintId = String(inputReceipt && inputReceipt.reprintId || ('r' + Date.now()));
       var requestedFrom = String(inputReceipt && inputReceipt.requestedFrom || '').trim() || (isReprint ? 'order_number_dialog' : 'sale_completed');
+      var routeTrigger = String(inputReceipt && inputReceipt.trigger || (isReprint ? 'manual_print' : 'sale_completed'));
       var requestedFromExistingOrder = requestedFrom === 'existing_order';
       var explicitStationPrinterId = String(inputReceipt && (inputReceipt.forceStationPrinterId || inputReceipt.stationPrinterId) || '').trim();
       var uniquePrintActionId = String(inputReceipt && inputReceipt.uniquePrintActionId || reprintId || ('copy_' + Date.now()));
@@ -277,7 +312,7 @@
       if (requestedFromExistingOrder || explicitStationPrinterId) {
         var stationPrinterId = explicitStationPrinterId;
         if (!stationPrinterId && dataService && typeof dataService.resolveStationPrinter === 'function') {
-          var resolved = await dataService.resolveStationPrinter({
+        var resolved = await dataService.resolveStationPrinter({
             merchantId: merchantId,
             locationId: locationId,
             stationId: stationId
@@ -304,10 +339,11 @@
       } else {
         destinations = await resolveDestinations({
           order: order,
-          trigger: isReprint ? 'manual_print' : 'sale_completed',
+          trigger: routeTrigger,
           merchantId: merchantId,
           locationId: locationId,
-          settings: settings
+          settings: settings,
+          suppressFallback: inputReceipt && inputReceipt.suppressDefaultReceiptFallback === true
         });
       }
 
@@ -322,7 +358,7 @@
       var batch = dataService && dataService.saveLocalPrintBatch
         ? await dataService.saveLocalPrintBatch({
             orderId: orderId,
-            trigger: isReprint ? 'manual_print' : 'sale_completed',
+            trigger: routeTrigger,
             requestedAt: nowIso(),
             requiredJobCount: destinations.filter(function(destination: any) { return destination.required !== false; }).length,
             optionalJobCount: destinations.filter(function(destination: any) { return destination.required === false; }).length,
@@ -333,9 +369,10 @@
       var jobs: any[] = [];
       for (var idx = 0; idx < destinations.length; idx += 1) {
         var destination = destinations[idx] || {};
-        var printerConfig = printersById[String(destination.printerId || '')];
+        var destinationPrinterId = String(destination.printerId || '');
+        var printerConfig = printersById[destinationPrinterId] || await legacyReceiptPrinterFromSettings(destinationPrinterId, settings);
         if (!printerConfig) {
-          jobs.push({ ok: false, printerId: String(destination.printerId || ''), message: 'Destination printer is disabled or unavailable.' });
+          jobs.push({ ok: false, printerId: destinationPrinterId, message: 'Destination printer is disabled or unavailable.' });
           continue;
         }
 
@@ -373,6 +410,7 @@
           order: order,
           isReprint: isReprint,
           changeDue: Number(inputReceipt && inputReceipt.changeDue || 0),
+          allowDrawerPulse: inputReceipt && inputReceipt.allowDrawerPulse === true,
           matchedLineIds: destination.matchedLineIds || []
         });
 
@@ -610,8 +648,137 @@
       };
     }
 
+    async function submitOrderTickets(inputOrder: any): Promise<any> {
+      return submitCustomerReceipt(Object.assign({}, inputOrder || {}, {
+        bypassReceiptPrintingEnabled: true,
+        suppressDefaultReceiptFallback: true,
+        requestedFrom: String(inputOrder && inputOrder.requestedFrom || 'send_order'),
+        trigger: String(inputOrder && inputOrder.trigger || 'order_sent')
+      }));
+    }
+
+    function resolveDrawerCapabilities(printer: any): any {
+      var profileId = global.LilposPrinterProfiles && global.LilposPrinterProfiles.normalizeProfileId
+        ? global.LilposPrinterProfiles.normalizeProfileId(printer && printer.profile)
+        : String(printer && printer.profile || 'generic_escpos_thermal');
+      var baseCaps = global.LilposPrinterProfiles && global.LilposPrinterProfiles.resolveProfileCapabilities
+        ? global.LilposPrinterProfiles.resolveProfileCapabilities(profileId)
+        : { supportsDrawerPulse: true };
+      return global.LilposPrinterProfiles && global.LilposPrinterProfiles.applyCapabilityOverrides
+        ? global.LilposPrinterProfiles.applyCapabilityOverrides(baseCaps, {
+            cutterInstalled: printer && printer.cutterInstalledOverride,
+            cashDrawerConnected: printer && printer.cashDrawerConnectedOverride,
+            rasterImageSupport: printer && printer.rasterImageSupportOverride
+          })
+        : baseCaps;
+    }
+
+    async function submitCashDrawerPulse(inputDrawer: any): Promise<any> {
+      var settings = await resolveSettings(inputDrawer && inputDrawer.settingsScope);
+      if (!settings.openCashDrawerWithCashSale) return { ok: false, skipped: true, message: 'Cash drawer opening is disabled.' };
+
+      var merchantId = String((inputDrawer && inputDrawer.merchantId) || (dataService && dataService.getMerchantId && dataService.getMerchantId()) || settings.merchantId || 'local-merchant');
+      var locationId = String((inputDrawer && inputDrawer.locationId) || (dataService && dataService.getLocationId && dataService.getLocationId()) || settings.locationId || 'local-location');
+      var stationId = String((inputDrawer && inputDrawer.stationId) || (dataService && dataService.getStationNumber && dataService.getStationNumber()) || settings.stationId || '1');
+      var businessDayId = String((inputDrawer && inputDrawer.businessDayId) || (dataService && dataService.getBusinessDate && dataService.getBusinessDate()) || nowIso().slice(0, 10));
+      var orderId = String(inputDrawer && inputDrawer.orderId || '').trim();
+      var requestedFrom = String(inputDrawer && inputDrawer.requestedFrom || 'cash_payment_completed');
+      var idempotencyKey = String(inputDrawer && inputDrawer.idempotencyKey || ['lilpos', merchantId, locationId, orderId || 'cash_drawer', stationId, 'cash_drawer'].join(':'));
+
+      var printerConfig = dataService && typeof dataService.resolveCashDrawerPrinter === 'function'
+        ? await dataService.resolveCashDrawerPrinter({ merchantId: merchantId, locationId: locationId, stationId: stationId })
+        : null;
+      if (!printerConfig && dataService && typeof dataService.resolveStationPrinter === 'function') {
+        printerConfig = await dataService.resolveStationPrinter({ merchantId: merchantId, locationId: locationId, stationId: stationId });
+      }
+      if (!printerConfig) return { ok: false, message: 'No Cash Drawer printer is assigned to this workstation.' };
+
+      var printability = canPrintWithConfig(printerConfig);
+      if (!printability.ok) return { ok: false, message: printability.message || 'Cash drawer printer configuration is not supported.' };
+      var capabilities = resolveDrawerCapabilities(printerConfig);
+      if (capabilities.supportsDrawerPulse === false) return { ok: false, skipped: true, message: 'Assigned printer does not support cash drawer pulse.' };
+
+      var discoveryResult = await discoverClient(settings);
+      if (!discoveryResult.ok) return { ok: false, message: 'LilPrint Agent is not available.', discovery: discoveryResult.discovery };
+
+      var jobId = buildJobId(idempotencyKey);
+      var printer = printerRequestFromConfig(printerConfig);
+      var builder = global.LilposEscposBuilder.createEscposBuilder({ capabilities: capabilities });
+      var request: LilPrintJobCreateRequest = {
+        appId: 'lilpos',
+        merchantId: merchantId,
+        locationId: locationId,
+        jobId: jobId,
+        idempotencyKey: idempotencyKey,
+        printer: printer,
+        payload: { type: resolvePayloadTypeForPrinter(printerConfig), data: builder.init().openDrawerPulse().base64() },
+        metadata: {
+          orderId: orderId || 'cash_drawer',
+          batchId: '',
+          stationId: stationId,
+          businessDayId: businessDayId,
+          jobType: 'cash_drawer' as any,
+          printerRole: 'cash_drawer' as any,
+          source: 'lilpos',
+          requestedFrom: requestedFrom,
+          isReprint: false
+        },
+        options: {
+          copies: 1,
+          priority: 'high',
+          retryEnabled: printerConfig.retryEnabled !== false,
+          maxAttempts: Math.max(1, Number(printerConfig.maxAttempts || settings.maxAttempts || 5))
+        }
+      };
+
+      var localRef = await persistJobReference({
+        orderId: orderId || 'cash_drawer',
+        batchId: '',
+        printJobId: jobId,
+        idempotencyKey: idempotencyKey,
+        jobType: 'cash_drawer' as any,
+        printerRole: 'cash_drawer' as any,
+        printerId: String(printer.id),
+        requestedAt: nowIso(),
+        lastKnownStatus: 'QUEUED',
+        lastStatusAt: nowIso(),
+        isReprint: false
+      });
+
+      var submitted = await submitJob(request, { client: discoveryResult.client });
+      if (!submitted.ok) {
+        if (localRef && localRef.id) {
+          await updateJobReference(localRef.id, {
+            lastKnownStatus: 'FAILED_FINAL',
+            lastStatusAt: nowIso(),
+            lastErrorMessage: submitted.errorMessage || 'Unable to submit cash drawer pulse.'
+          });
+        }
+        return { ok: false, message: submitted.errorMessage || 'Unable to submit cash drawer pulse.' };
+      }
+
+      var status = normalizeStatus(submitted.remote && (submitted.remote.status || submitted.remote.jobStatus) || 'QUEUED');
+      if (localRef && localRef.id) {
+        await updateJobReference(localRef.id, {
+          lastKnownStatus: status,
+          lastStatusAt: nowIso(),
+          lastErrorMessage: ''
+        });
+      }
+
+      return {
+        ok: true,
+        printJobId: jobId,
+        status: status,
+        localRef: localRef,
+        baseUrl: discoveryResult.discovery.baseUrl
+      };
+    }
+
     return {
       submitCustomerReceipt: submitCustomerReceipt,
+      submitOrderTickets: submitOrderTickets,
+      submitCashDrawerPulse: submitCashDrawerPulse,
       submitTestReceipt: submitTestReceipt,
       resolveSettings: resolveSettings,
       resolveDestinations: resolveDestinations

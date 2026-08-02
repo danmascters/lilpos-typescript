@@ -245,7 +245,8 @@ describe('receipt popup after payment', () => {
         renderFn();
         await wait(30);
         expect(app.document.querySelector('#orderPrintCustomer')).not.toBeNull();
-        expect(app.document.querySelector('#orderNoReceipt')).not.toBeNull();
+        expect(app.document.querySelector('#orderPrintMerchant')).not.toBeNull();
+        expect(app.document.querySelector('#orderPrintBoth')).not.toBeNull();
         expect(app.document.querySelector('#orderNumberDone')).not.toBeNull();
       } else {
         expect(true).toBe(true);

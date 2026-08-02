@@ -31,7 +31,7 @@ function cashPaymentPaneHtml(state: PaymentPaneState): string {
           </div>
         </div>
         <div class="lilpay-cash-col">
-          <h3>Quick Amounts</h3>
+          <h3>Cash Received</h3>
           <div class="lilpay-quick-row" role="group" aria-label="Quick cash amounts">
             ${quickAmounts.map((cents) => `<button type="button" data-lilpay-quick="${cents}">${formatWholeDollarCents(cents)}</button>`).join('')}
           </div>

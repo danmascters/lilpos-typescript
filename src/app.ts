@@ -452,6 +452,9 @@ const state: any = {
     phone: '',
     tableNumber: ''
   },
+  tableServiceOpen: false,
+  tableServiceController: null,
+  tableServiceEnabled: true,
   orderTypeDetails: {
     togoName: '',
     togoPhone: '',
@@ -511,6 +514,7 @@ const state: any = {
   scrollCartOnAdd: false,
   restoreMenuBoardScrollTop: null,
   lineCount: 6,
+  callerIdEnabled: true,
   phoneLines: [],
   selectedLineNumber: null,
   pwaDiag: {
@@ -641,7 +645,9 @@ function persistManagerSettings() {
     const existing = readManagerSettings();
     const next = {
       ...existing,
-      keyboardMode: normalizeKeyboardMode(state.keyboardMode)
+      keyboardMode: normalizeKeyboardMode(state.keyboardMode),
+      callerIdEnabled: state.callerIdEnabled !== false,
+      tableServiceEnabled: state.tableServiceEnabled !== false
     };
     localStorage.setItem(MANAGER_SETTINGS_STORE_KEY, JSON.stringify(next));
   } catch (err) {
@@ -652,6 +658,28 @@ function persistManagerSettings() {
 function hydrateManagerSettingsFromStorage() {
   const settings = readManagerSettings();
   state.keyboardMode = normalizeKeyboardMode(settings.keyboardMode);
+  state.callerIdEnabled = settings.callerIdEnabled !== false;
+  state.tableServiceEnabled = settings.tableServiceEnabled !== false;
+}
+
+function clearCallerIdRuntimeState() {
+  lineResetTimers.forEach((timerId) => clearTimeout(timerId));
+  lineResetTimers.clear();
+  state.phoneLines = initPhoneLines(state.lineCount);
+  state.selectedLineNumber = null;
+  state.call = null;
+  state.activityOpen = false;
+  if (state.orderSource === 'callerId' || state.orderSource === 'unknown') {
+    setPhoneClassifier(false);
+  }
+}
+
+function setCallerIdEnabled(enabled) {
+  const nextEnabled = enabled !== false;
+  if (state.callerIdEnabled === nextEnabled) return;
+  state.callerIdEnabled = nextEnabled;
+  if (!nextEnabled) clearCallerIdRuntimeState();
+  persistManagerSettings();
 }
 
 function hasCapability(capability, fallback = true) {
@@ -1390,8 +1418,16 @@ const keyboardController = (() => {
     target.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  function inputSupportsTextSelection(target): boolean {
+    if (!(target instanceof HTMLInputElement)) return true;
+    const type = String(target.type || 'text').toLowerCase();
+    // number, email, etc. throw InvalidStateError on setSelectionRange
+    return type === 'text' || type === 'search' || type === 'tel' || type === 'url' || type === 'password';
+  }
+
   function setTargetSelection(target, start, end = start) {
     if (typeof target.setSelectionRange !== 'function') return;
+    if (!inputSupportsTextSelection(target)) return;
     const nextStart = Math.max(0, start);
     const nextEnd = Math.max(nextStart, end);
     target.setSelectionRange(nextStart, nextEnd);
@@ -1400,8 +1436,8 @@ const keyboardController = (() => {
 
   function normalizeSelection(target) {
     const value = String(target.value || '');
-    const start = typeof target.selectionStart === 'number' ? target.selectionStart : value.length;
-    const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+    const start = inputSupportsTextSelection(target) && typeof target.selectionStart === 'number' ? target.selectionStart : value.length;
+    const end = inputSupportsTextSelection(target) && typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
     lastKnownSelection = { start, end };
     return { value, start, end };
   }
@@ -1409,8 +1445,8 @@ const keyboardController = (() => {
   function rememberSelectionForTarget(target) {
     if (!target) return;
     const value = String(target.value || '');
-    const start = typeof target.selectionStart === 'number' ? target.selectionStart : value.length;
-    const end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+    const start = inputSupportsTextSelection(target) && typeof target.selectionStart === 'number' ? target.selectionStart : value.length;
+    const end = inputSupportsTextSelection(target) && typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
     lastKnownSelection = { start, end };
   }
 
@@ -2293,6 +2329,14 @@ function closeOrderNumberDialog() {
   state.orderNumberDialog.receiptPrintBaseUrl = '';
 }
 
+function closeOrderNumberDialogToSource() {
+  const source = state.orderNumberDialog.source;
+  closeOrderNumberDialog();
+  if (source === 'orders-management') {
+    state.mainView = MAIN_VIEWS.orders;
+  }
+}
+
 function openOrderNumberDialog(orderNumber, orderId, opts: { totalCents?: number; tipCents?: number; changeDueCents?: number; allowMerchantCopy?: boolean; source?: 'new-sale' | 'orders-management' } = {}) {
   state.orderNumberDialog.open = true;
   state.orderNumberDialog.orderNumber = orderNumber || '';
@@ -2319,28 +2363,22 @@ async function printOrderNumberReceipt(kind) {
     state.orderNumberDialog.receiptStatusMessage = 'Only receipt copy printing actions are available in this phase.';
     state.orderNumberDialog.receiptStatusTone = 'warn';
     render();
-    return;
-  }
-  if (isMerchantCopy && !state.orderNumberDialog.allowMerchantCopy) {
-    state.orderNumberDialog.receiptStatusMessage = 'Merchant copy is only available for card payments.';
-    state.orderNumberDialog.receiptStatusTone = 'warn';
-    render();
-    return;
+    return false;
   }
   if (!printJobService) {
     state.orderNumberDialog.receiptStatusMessage = 'Print service is not available in this build.';
     state.orderNumberDialog.receiptStatusTone = 'bad';
     render();
-    return;
+    return false;
   }
-  if (state.orderNumberDialog.printingLocked) return;
+  if (state.orderNumberDialog.printingLocked) return false;
 
   const order = await hydratePersistedOrderDetail(state.orderNumberDialog.orderId);
   if (!order) {
     state.orderNumberDialog.receiptStatusMessage = 'Order data is no longer available in local history.';
     state.orderNumberDialog.receiptStatusTone = 'bad';
     render();
-    return;
+    return false;
   }
 
   state.orderNumberDialog.printingLocked = true;
@@ -2362,7 +2400,7 @@ async function printOrderNumberReceipt(kind) {
     state.orderNumberDialog.receiptStatusMessage = submit.message || 'Unable to submit receipt.';
     state.orderNumberDialog.receiptStatusTone = 'bad';
     render();
-    return;
+    return false;
   }
 
   state.orderNumberDialog.receiptPrintJobId = String(submit.printJobId || '');
@@ -2397,6 +2435,47 @@ async function printOrderNumberReceipt(kind) {
       }
     });
   }
+  return true;
+}
+
+async function printOrderNumberReceiptBoth() {
+  const customerPrinted = await printOrderNumberReceipt('customer_receipt');
+  if (!customerPrinted || !state.orderNumberDialog.open) return false;
+  return printOrderNumberReceipt('merchant_copy');
+}
+
+async function submitOrderSentPrintJobs(order) {
+  if (!printJobService || typeof printJobService.submitOrderTickets !== 'function') return;
+  const submit = await printJobService.submitOrderTickets({
+    order,
+    requestedFrom: 'send_order',
+    trigger: 'order_sent'
+  });
+  if (!submit.ok && !submit.skipped) {
+    console.warn('Unable to submit order ticket print jobs:', submit.message || submit);
+  }
+}
+
+async function submitCashDrawerPulseForPayment(orderId, paymentType) {
+  if (!printJobService || typeof printJobService.submitCashDrawerPulse !== 'function') return;
+  const normalized = String(paymentType || '').toLowerCase();
+  if (!normalized.includes('cash')) return;
+  const submit = await printJobService.submitCashDrawerPulse({
+    orderId,
+    idempotencyKey: `cash_drawer|${orderId}|cash_payment_completed`,
+    requestedFrom: 'cash_payment_completed'
+  });
+  if (!submit.ok && !submit.skipped) {
+    console.warn('Unable to submit cash drawer pulse:', submit.message || submit);
+  }
+}
+
+async function submitCashDrawerPulseForPaymentLines(orderId, paymentLines) {
+  const hasCash = (Array.isArray(paymentLines) ? paymentLines : []).some((line) => {
+    return String(line?.paymentType || '').toLowerCase().includes('cash');
+  });
+  if (!hasCash) return;
+  await submitCashDrawerPulseForPayment(orderId, 'Cash');
 }
 
 function openPrinterSettingsFromExistingOrder() {
@@ -3690,13 +3769,16 @@ async function completePayNowOrder() {
     paymentStatus: payload.paymentStatus
   });
 
+  await submitOrderSentPrintJobs(persistedOrder);
+  await submitCashDrawerPulseForPaymentLines(persistedOrder.id, persistedOrder.paymentLines);
+
   closePaymentDialog();
   closePayNowMissingDialog();
-  resetTicketAfterPayment();
   const hasCardPayment = (state.paymentDialog.paymentLines || []).some((line) => {
     const normalized = String(line?.paymentType || '').toLowerCase();
     return normalized.includes('card') || normalized.includes('credit') || normalized.includes('debit');
   });
+  resetTicketAfterPayment();
   openOrderNumberDialog(orderNumber, persistedOrder.id, {
     totalCents: Math.round(totals.amountDue * 100),
     tipCents: Math.round(totals.tipTotal * 100),
@@ -3838,6 +3920,8 @@ async function completePayLaterOrder() {
     paymentIntent: payload.paymentIntent,
     paymentStatus: payload.paymentStatus
   });
+
+  await submitOrderSentPrintJobs(persistedOrder);
 
   closePayLaterMissingDialog();
   resetTicketAfterPayment();
@@ -4192,6 +4276,56 @@ function closeOrderTypeDraftDialog() {
     tableNumber: ''
   };
   state.focusOrderTypeDraftNameOnRender = false;
+}
+
+function getTableServiceController() {
+  if (!state.tableServiceController) {
+    state.tableServiceController = (window as any).LilposTableServiceRuntime?.createController({
+      dataService: (window as any).lilposDataService || null,
+      onChange: () => {
+        if (state.tableServiceOpen) {
+          render();
+        }
+      },
+      onSelectTable: (label: string, table: any) => {
+        const tableNumber = String(table?.displayName || table?.id || label || '').replace(/[^0-9A-Za-z]/g, '').slice(0, 6);
+        if (state.orderTypeDraftDialog?.type === 'dinein') {
+          state.orderTypeDraftDialog.tableNumber = tableNumber;
+        }
+        state.orderTypeDetails.dineInTableNumber = tableNumber;
+        closeTableServiceModule();
+      },
+      onClose: () => closeTableServiceModule()
+    });
+  }
+  return state.tableServiceController;
+}
+
+function openTableServiceFromDraftDialog() {
+  state.tableServiceOpen = true;
+  const controller = getTableServiceController();
+  if (controller?.load) {
+    void controller.load('Loading floor plan...');
+  }
+  render();
+}
+
+function closeTableServiceModule() {
+  state.tableServiceOpen = false;
+  render();
+}
+
+function tableServiceModuleHtml() {
+  if (!state.tableServiceOpen) return '';
+  const controller = getTableServiceController();
+  if (!controller?.render) return '';
+  return `
+    <div class="modal-backdrop table-service-overlay">
+      <div class="table-service-shell">
+        ${controller.render()}
+      </div>
+    </div>
+  `;
 }
 
 function openOrderTypeDraftDialog(type: 'togo' | 'dinein') {
@@ -5996,6 +6130,7 @@ async function completeSelectedOrderPaymentFromPane(paymentLine: any, behavior: 
     await hydratePersistedOrderDetail(context.orderId);
     if (behavior.closeAfter !== false) {
       if (remainingCents === 0) {
+        await submitCashDrawerPulseForPayment(context.orderId, paymentLine.paymentType);
         const changeDueCents = paymentLine.paymentType === 'Cash'
           ? Math.max(0, Number(paymentLine.amountCents || 0) - appliedCents)
           : 0;
@@ -6300,12 +6435,14 @@ function cancelSaleConfirmed() {
 }
 
 function simulateCall() {
+  if (state.callerIdEnabled === false) return;
   const idle = state.phoneLines.find((l) => l.state === 'idle');
   const targetLine = idle ? idle.lineNumber : sample(state.phoneLines).lineNumber;
   simulateCallOnLine(targetLine);
 }
 
 function simulateCallOnLine(lineNumber) {
+  if (state.callerIdEnabled === false) return;
   const useKnown = Math.random() > 0.45;
   const payload = useKnown ? knownCustomerCallerPayload(lineNumber, sample(state.mockCustomers)) : unknownCallerPayload(lineNumber);
   clearLineResetTimer(lineNumber);
@@ -6330,6 +6467,7 @@ function simulateCallOnLine(lineNumber) {
 }
 
 function simulateIncomingCalls(count) {
+  if (state.callerIdEnabled === false) return;
   const shuffled = [...state.phoneLines].sort(() => Math.random() - 0.5);
   const chosen = shuffled.slice(0, Math.min(count, state.phoneLines.length));
   chosen.forEach((line, idx) => {
@@ -6360,6 +6498,7 @@ function simulateIncomingCalls(count) {
 }
 
 function openIncomingLine(lineNumber) {
+  if (state.callerIdEnabled === false) return;
   const line = getLine(lineNumber);
   if (!line || line.state !== 'ringing') return;
   clearLineResetTimer(lineNumber);
@@ -6409,6 +6548,7 @@ function cancelDraftCustomer() {
 }
 
 function claimLine(lineNumber) {
+  if (state.callerIdEnabled === false) return;
   const line = getLine(lineNumber);
   if (!line || line.state === 'idle') return;
   clearLineResetTimer(lineNumber);
@@ -6418,6 +6558,7 @@ function claimLine(lineNumber) {
 }
 
 function dismissLine(lineNumber) {
+  if (state.callerIdEnabled === false) return;
   const line = getLine(lineNumber);
   if (!line || line.state === 'idle' || line.state === 'ended') return;
   state.selectedLineNumber = null;
@@ -6426,6 +6567,7 @@ function dismissLine(lineNumber) {
 }
 
 function endAllCalls() {
+  if (state.callerIdEnabled === false) return;
   state.phoneLines.forEach((line) => {
     if (line.state !== 'idle' && line.state !== 'ended') {
       moveLineToEnded(line.lineNumber);
@@ -6436,6 +6578,7 @@ function endAllCalls() {
 }
 
 function startTicketFromLine(lineNumber) {
+  if (state.callerIdEnabled === false) return;
   const line = getLine(lineNumber);
   if (!line) return;
   const known = findKnownCustomerByPhone(line.phoneNumber);
@@ -7684,6 +7827,31 @@ function navIcon(name) {
   return `<svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
 }
 
+function orderTypeIconHtml(orderType, options: any = {}) {
+  const type = String(orderType || '').toLowerCase();
+  const labels: Record<string, string> = {
+    pickup: 'Pickup',
+    delivery: 'Delivery',
+    togo: 'To-Go',
+    tost: 'To-Stay',
+    tostay: 'To-Stay',
+    dinein: 'Dine-In',
+    dine: 'Dine-In'
+  };
+  const icons: Record<string, string> = {
+    pickup: '&#128694;',
+    delivery: '&#128666;',
+    togo: '&#128717;',
+    tost: '&#127869;',
+    tostay: '&#127869;',
+    dinein: '&#129685;',
+    dine: '&#129685;'
+  };
+  const label = options.label || labels[type] || ORDER_TYPES[type] || orderType || 'Order type';
+  const icon = icons[type] || '&#127858;';
+  return `<span class="order-type-icon order-type-icon-inline" role="img" aria-label="${h(label)}" title="${h(label)}">${icon}</span>`;
+}
+
 function customerRecordIcon() {
   return '<span class="line-customer-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"></circle><path d="M6 19c.8-3.2 3-5 6-5s5.2 1.8 6 5"></path></svg></span>';
 }
@@ -7693,6 +7861,7 @@ function lineCardOnFileIcon() {
 }
 
 function phoneLinesFooterHtml() {
+  if (state.callerIdEnabled === false) return '';
   return `
     <footer class="line-footer">
       <div class="line-grid">
@@ -7710,6 +7879,7 @@ function phoneLinesFooterHtml() {
 }
 
 function lineModalHtml() {
+  if (state.callerIdEnabled === false) return '';
   const line = getLine(state.selectedLineNumber);
   if (!line || line.state !== 'ringing') return '';
   const detailRows = Object.entries(line.rawDetails || {}).map(([k, v]) => `<li><b>${h(k)}:</b> ${h(v)}</li>`).join('');
@@ -7747,9 +7917,9 @@ function menuBoardHtml(filtered) {
           <input id="query" type="text" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lilpos-keyboard="true" data-form-type="other" aria-autocomplete="none" placeholder="Search menu..." value="${h(state.query)}" />
         </div>
         <button id="clearSearch" class="btn-secondary" ${state.query ? '' : 'disabled'}>Clear Search</button>
-        <button id="toggleActivity" class="btn-secondary">Incoming</button>
+        ${state.callerIdEnabled === false ? '' : '<button id="toggleActivity" class="btn-secondary">Incoming</button>'}
       </div>
-      ${state.activityOpen ? `<div class="incoming-panel"><button id="simulateCall" class="btn-success">Simulate Caller ID</button><div class="line-sim-buttons">${state.phoneLines.map((l) => `<button class="btn-secondary" data-sim-line="${l.lineNumber}">Ring Line ${l.lineNumber}</button>`).join('')}</div><ul>${incomingEntriesHtml()}</ul></div>` : ''}
+      ${state.callerIdEnabled !== false && state.activityOpen ? `<div class="incoming-panel"><button id="simulateCall" class="btn-success">Simulate Caller ID</button><div class="line-sim-buttons">${state.phoneLines.map((l) => `<button class="btn-secondary" data-sim-line="${l.lineNumber}">Ring Line ${l.lineNumber}</button>`).join('')}</div><ul>${incomingEntriesHtml()}</ul></div>` : ''}
       ${!state.menu ? '<div class="empty"><h2>Menu not loaded</h2><p>Open Dev Tools and run Generate + Store Menu or Load DB.</p></div>' : ''}
       ${showCategoryTiles ? categoryTilesHtml() : ''}
       ${showFavorites && favoriteCats.length ? `<div class="favorites-cats"><h4>Favorite Categories</h4><div class="category-tile-grid">${favoriteCats.map((c) => categoryTileButtonHtml(c, 'Favorite category')).join('')}</div></div>` : ''}
@@ -7903,6 +8073,7 @@ function orderManagementPaymentBadge(order, partialLabel = 'PARTIAL') {
 function renderOrderTile(order, options: any = {}) {
   const compact = !!options.compact;
   const typeLabel = ORDER_TYPES[order.orderType] || order.orderType;
+  const typeIcon = orderTypeIconHtml(order.orderType, { label: typeLabel });
   const paymentBadge = orderManagementPaymentBadge(order);
   const displayNumber = formatOrderNumberForDisplay(order.number);
   const deliveryLabel = order.deliveryStatus ? window.LilposDeliveryManagerView.statusLabel(order.deliveryStatus) : '';
@@ -7910,6 +8081,7 @@ function renderOrderTile(order, options: any = {}) {
   return `
     <button class="order-mgmt-tile${compact ? ' compact' : ''}" data-open-order="${order.id}">
       <div class="order-tile-badge-row">
+        ${typeIcon}
         <span class="order-payment-badge ${paymentBadge.paidClass}">${paymentBadge.paidText}</span>
         ${deliveryLabel ? `<span class="delivery-status-badge status-${String(order.deliveryStatus).toLowerCase()}">${h(deliveryLabel)}</span>` : ''}
       </div>
@@ -7947,6 +8119,7 @@ function renderOrderManagementRows(rows, columnLayout) {
     money,
     formatOrderNumberForDisplay,
     paymentBadgeForOrder: (order) => orderManagementPaymentBadge(order, 'PARTIALLY PAID'),
+    orderTypeIconHtml,
     columnLayout,
     hiddenColumnIds: ordersManagementHiddenColumnIds()
   });
@@ -8082,7 +8255,7 @@ function renderManagerSystemStatusView() {
         ${statusCard('Online Status', online)}
         ${statusCard('LilServer Connection', serverConnected)}
         ${statusCard('Printer', true, 'Online')}
-        ${statusCard('Caller ID', true, 'Listening')}
+        ${statusCard('Caller ID', state.callerIdEnabled !== false, state.callerIdEnabled === false ? 'Disabled' : 'Listening')}
         ${statusCard('Secure Context', state.pwaDiag.secure)}
         ${statusCard('Manifest', state.pwaDiag.manifest)}
         ${statusCard('Service Worker Supported', state.pwaDiag.swSupported)}
@@ -8162,15 +8335,16 @@ function renderManagerDevToolsView() {
       </div>
       <div class="mgr-devtools-section">
         <h4>Caller ID Simulation</h4>
+        ${state.callerIdEnabled === false ? '<p class="muted">Caller ID is disabled in Caller ID settings.</p>' : ''}
         <div class="call-sim-actions">
-          <button class="btn-success" data-mgr-sim-count="1">Simulate 1 Incoming Call</button>
-          <button class="btn-success" data-mgr-sim-count="2">Simulate 2 Incoming Calls</button>
-          <button class="btn-success" data-mgr-sim-count="3">Simulate 3 Incoming Calls</button>
-          <button class="btn-success" data-mgr-sim-count="4">Simulate 4 Incoming Calls</button>
-          <button class="btn-danger" id="mgrEndAllCalls">End All Calls</button>
+          <button class="btn-success" data-mgr-sim-count="1" ${state.callerIdEnabled === false ? 'disabled' : ''}>Simulate 1 Incoming Call</button>
+          <button class="btn-success" data-mgr-sim-count="2" ${state.callerIdEnabled === false ? 'disabled' : ''}>Simulate 2 Incoming Calls</button>
+          <button class="btn-success" data-mgr-sim-count="3" ${state.callerIdEnabled === false ? 'disabled' : ''}>Simulate 3 Incoming Calls</button>
+          <button class="btn-success" data-mgr-sim-count="4" ${state.callerIdEnabled === false ? 'disabled' : ''}>Simulate 4 Incoming Calls</button>
+          <button class="btn-danger" id="mgrEndAllCalls" ${state.callerIdEnabled === false ? 'disabled' : ''}>End All Calls</button>
         </div>
         <div class="line-sim-buttons" style="margin-top:8px;">
-          ${state.phoneLines.map((l) => `<button class="btn-secondary ${l.state === 'idle' || l.state === 'ended' ? 'disabled' : ''}" data-mgr-end-line="${l.lineNumber}" ${l.state === 'idle' || l.state === 'ended' ? 'disabled' : ''}>End Line ${l.lineNumber}</button>`).join('')}
+          ${state.phoneLines.map((l) => `<button class="btn-secondary ${state.callerIdEnabled === false || l.state === 'idle' || l.state === 'ended' ? 'disabled' : ''}" data-mgr-end-line="${l.lineNumber}" ${state.callerIdEnabled === false || l.state === 'idle' || l.state === 'ended' ? 'disabled' : ''}>End Line ${l.lineNumber}</button>`).join('')}
         </div>
       </div>
       <div class="mgr-devtools-section">
@@ -8200,6 +8374,105 @@ function renderManagerKeyboardOptionsView() {
         </div>
       </div>
       <div class="mgr-setting-note muted">Current: ${h(keyboardModeLabel(selectedMode))}</div>
+    </div>
+  `;
+}
+
+function readSecuritySettings(settingsFn: () => Record<string, any>): any {
+  try {
+    const settings = settingsFn();
+    return {
+      pinCodeEnabled: settings['security.pinCodeEnabled'] !== undefined ? !!settings['security.pinCodeEnabled'] : true,
+      screenIdleTimerEnabled: settings['security.screenIdleTimerEnabled'] !== undefined ? !!settings['security.screenIdleTimerEnabled'] : false,
+      screenTimeoutSeconds: settings['security.screenTimeoutSeconds'] !== undefined ? clampSecurityTimeout(Number(settings['security.screenTimeoutSeconds'])) : 300
+    };
+  } catch (err) {
+    console.error('Failed to read security settings:', err);
+    return { pinCodeEnabled: true, screenIdleTimerEnabled: false, screenTimeoutSeconds: 300 };
+  }
+}
+
+function writeSecuritySettings(existing: Record<string, any>, security: any): Record<string, any> {
+  const next = { ...existing };
+  if (security.pinCodeEnabled !== undefined) next['security.pinCodeEnabled'] = !!security.pinCodeEnabled;
+  if (security.screenIdleTimerEnabled !== undefined) next['security.screenIdleTimerEnabled'] = !!security.screenIdleTimerEnabled;
+  if (security.screenTimeoutSeconds !== undefined) next['security.screenTimeoutSeconds'] = clampSecurityTimeout(Number(security.screenTimeoutSeconds));
+  return next;
+}
+
+function clampSecurityTimeout(seconds: number): number {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) return 300;
+  return Math.max(10, Math.min(3600, Math.round(n)));
+}
+
+function renderManagerSecuritySettingsView() {
+  const securitySettings = readSecuritySettings(readManagerSettings);
+  const pinEnabled = securitySettings.pinCodeEnabled;
+  const idleTimerEnabled = securitySettings.screenIdleTimerEnabled;
+  const timeoutSeconds = securitySettings.screenTimeoutSeconds;
+  return `
+    <div class="mgr-section-content mgr-security-settings-view">
+      <h3>Security</h3>
+      <div class="mgr-setting-row">
+        <div class="mgr-setting-label-wrap">
+          <b class="mgr-setting-label">PIN Code Enabled</b>
+          <small class="muted">Require PIN code to access manager settings and lock screen.</small>
+        </div>
+        <label class="mgr-toggle-switch">
+          <input id="mgrSecurityPinEnabled" type="checkbox" ${pinEnabled ? 'checked' : ''} />
+          <span class="mgr-toggle-slider" aria-hidden="true"></span>
+          <span class="mgr-toggle-text">${pinEnabled ? 'Enabled' : 'Disabled'}</span>
+        </label>
+      </div>
+      <div class="mgr-setting-row">
+        <div class="mgr-setting-label-wrap">
+          <b class="mgr-setting-label">Screen Idle Timer</b>
+          <small class="muted">Automatically lock the screen after a period of inactivity.</small>
+        </div>
+        <label class="mgr-toggle-switch">
+          <input id="mgrSecurityIdleTimer" type="checkbox" ${idleTimerEnabled ? 'checked' : ''} />
+          <span class="mgr-toggle-slider" aria-hidden="true"></span>
+          <span class="mgr-toggle-text">${idleTimerEnabled ? 'Enabled' : 'Disabled'}</span>
+        </label>
+      </div>
+      <div class="mgr-setting-row ${idleTimerEnabled ? '' : 'mgr-security-input-wrap is-disabled'}">
+        <div class="mgr-setting-label-wrap">
+          <b class="mgr-setting-label">Screen Timeout</b>
+          <small class="muted">Seconds of inactivity before the screen locks. Min: 10, Max: 3600.</small>
+        </div>
+        <div class="mgr-security-input-wrap ${idleTimerEnabled ? '' : 'is-disabled'}">
+          <input id="mgrSecurityTimeout" class="mgr-security-input" type="number" min="10" max="3600" value="${timeoutSeconds}" ${idleTimerEnabled ? '' : 'disabled'} />
+          <small>seconds</small>
+        </div>
+      </div>
+      <div class="mgr-security-save-row">
+        <button id="mgrSecuritySave" class="btn-primary">Save Security Settings</button>
+      </div>
+      <div id="mgrSecuritySaveMessage" class="mgr-security-save-message" style="display:none;"></div>
+    </div>
+  `;
+}
+
+function renderManagerCallerIdSettingsView() {
+  const enabled = state.callerIdEnabled !== false;
+  return `
+    <div class="mgr-section-content mgr-callerid-settings-view">
+      <h3>Caller ID Settings</h3>
+      <div class="mgr-setting-row mgr-callerid-setting-row">
+        <div class="mgr-setting-label-wrap">
+          <b class="mgr-setting-label">Enable Caller ID</b>
+          <small class="muted">Show the caller line strip at the bottom of LilPOS and allow incoming caller actions.</small>
+        </div>
+        <label class="mgr-toggle-switch">
+          <input id="mgrCallerIdEnabled" type="checkbox" ${enabled ? 'checked' : ''} />
+          <span class="mgr-toggle-slider" aria-hidden="true"></span>
+          <span class="mgr-toggle-text">${enabled ? 'Enabled' : 'Disabled'}</span>
+        </label>
+      </div>
+      <div class="mgr-setting-note muted">
+        ${enabled ? 'Caller line buttons are available on the main screen.' : 'Caller line buttons are hidden and incoming caller actions are disabled.'}
+      </div>
     </div>
   `;
 }
@@ -8392,9 +8665,11 @@ const MANAGER_SETTINGS_TILES = [
   { id: 'stations',    icon: '&#128421;',title: 'Stations',          desc: 'Register and station settings' },
   { id: 'stationdata', icon: '&#128451;',title: 'Station Data Manager', desc: 'View local station data, sync status, and storage health' },
   { id: 'deliverymanager', icon: '&#128666;', title: 'Delivery Manager', desc: 'Manage drivers, delivery assignments, driver banks, tips, and settlements.' },
+  { id: 'tablemanager',    icon: '&#127981;', title: 'Table Manager',    desc: 'Table service floor, layout, and feature settings' },
   { id: 'ordersettings', icon: '&#128203;', title: 'Order Settings', desc: 'Order types, timing, and defaults' },
   { id: 'reports',     icon: '&#128200;',title: 'Reports',           desc: 'Sales summaries and activity' },
   { id: 'business',    icon: '&#127981;',title: 'Business Settings', desc: 'Name, address, hours, and tax' },
+  { id: 'security',    icon: '&#128737;',title: 'Security',          desc: 'PIN code, screen idle timer, and lock settings' },
   { id: 'subscription', icon: '&#11088;',title: 'Subscription & Features', desc: 'Plan, tier, and enabled features' }
 ];
 
@@ -8466,6 +8741,38 @@ function renderManagerSettingsView() {
       </div>
     `;
   }
+  if (activeSection === 'security') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrSectionBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          ${renderManagerSecuritySettingsView()}
+        </div>
+      </div>
+    `;
+  }
+  if (activeSection === 'callerid') {
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Manager Settings</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrSectionBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          ${renderManagerCallerIdSettingsView()}
+        </div>
+      </div>
+    `;
+  }
   if (activeSection === 'stationdata') {
     return `
       <div class="mgr-settings-view">
@@ -8504,6 +8811,34 @@ function renderManagerSettingsView() {
         <div class="mgr-settings-header"><h2>Delivery Manager</h2><div class="mgr-settings-header-actions"><button id="mgrSectionBack" class="btn-secondary">&#8592; Back</button><button id="mgrLock" class="btn-danger">Lock Manager</button></div></div>
         <div class="mgr-section-wrapper">${window.LilposDeliveryManagerView.render(deliveryManagerController.state)}</div>
       </div>`;
+  }
+  if (activeSection === 'tablemanager') {
+    const tsEnabled = state.tableServiceEnabled !== false;
+    return `
+      <div class="mgr-settings-view">
+        <div class="mgr-settings-header">
+          <h2>Table Manager</h2>
+          <div class="mgr-settings-header-actions">
+            <button id="mgrSectionBack" class="btn-secondary">&#8592; Back</button>
+            <button id="mgrLock" class="btn-danger">Lock Manager</button>
+          </div>
+        </div>
+        <div class="mgr-section-wrapper">
+          <div class="mgr-section-content">
+            <h3>Table Service</h3>
+            <p class="muted">Enable or disable the Table Service floor feature. When disabled, the Tables button will not appear in the Dine-In dialog.</p>
+            <div class="mgr-setting-row">
+              <label class="mgr-setting-label" for="tableServiceEnabledToggle">Enable Table Service</label>
+              <label class="mgr-toggle-switch">
+                <input type="checkbox" id="tableServiceEnabledToggle" ${tsEnabled ? 'checked' : ''} />
+                <span class="mgr-toggle-track"></span>
+              </label>
+              <span class="mgr-setting-status">${tsEnabled ? 'Enabled' : 'Disabled'}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
   }
   
   // Default: show placeholder for remaining sections
@@ -8927,9 +9262,6 @@ function orderNumberDialogHtml() {
     ? printerSettingsController.getDraft()
     : null) || (window.LilposPrinterSettingsService?.defaults?.({}) || null);
   const receiptEnabled = !!printerSettings?.receiptPrintingEnabled;
-  const autoPrint = receiptEnabled && !!printerSettings?.autoPrintReceiptAfterSale;
-  const showPromptButtons = receiptEnabled && !autoPrint && !!printerSettings?.promptForReceiptAfterSale;
-  const showMerchantCopyButton = receiptEnabled && !!dlg.allowMerchantCopy;
   const showPaymentInfo = dlg.totalCents > 0;
   const displayNumber = dlg.orderNumber ? formatOrderNumberForDisplay(dlg.orderNumber) : '';
   const fmtCents = (cents: number) => money(cents / 100);
@@ -8962,9 +9294,9 @@ function orderNumberDialogHtml() {
         `}
         ${receiptEnabled ? `
           <div class="call-modal-actions order-number-actions">
-            <button id="orderPrintCustomer" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>${showPromptButtons ? 'Print Receipt' : (dlg.receiptPrintJobId ? 'Reprint Receipt' : 'Print Receipt')}</button>
-            ${showMerchantCopyButton ? `<button id="orderPrintMerchant" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>Print Merchant Copy</button>` : ''}
-            <button id="orderNoReceipt" class="btn-secondary">No Receipt</button>
+            <button id="orderPrintCustomer" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>Print Customer Receipt</button>
+            <button id="orderPrintMerchant" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>Print Merchant Receipt</button>
+            <button id="orderPrintBoth" class="btn-secondary" ${dlg.printingLocked ? 'disabled' : ''}>Print Both</button>
           </div>
         ` : ''}
         ${dlg.receiptStatusMessage ? `<p class="order-receipt-status ${dlg.receiptStatusTone || ''}">${h(dlg.receiptStatusMessage)}</p>` : ''}
@@ -8984,8 +9316,13 @@ function orderTypeDraftDialogHtml() {
   return `
     <div class="modal-backdrop">
       <div class="call-modal manager-modal order-type-draft-dialog">
-        <h3>${isTogo ? 'Start A To-Go Order' : 'Start Dine-In Order'}</h3>
-        <p>${isTogo ? 'Name and phone are optional for To-Go.' : 'Table number is optional for Dine-In.'}</p>
+        <div class="order-type-draft-header">
+          <div>
+            <h3>${isTogo ? 'Start A To-Go Order' : 'Start Dine-In Order'}</h3>
+            <p>${isTogo ? 'Name and phone are optional for To-Go.' : 'Table number is optional for Dine-In.'}</p>
+          </div>
+          ${!isTogo && state.tableServiceEnabled !== false ? `<button id="openTableServiceBtn" class="btn-secondary" type="button">Tables</button>` : ''}
+        </div>
         ${isTogo ? `
           <div class="entry-grid">
             <input id="togoDraftName" data-keyboard-context="customer-profile-name" data-keyboard-placement="above" placeholder="Optional name" value="${h(draft.name || '')}" />
@@ -9657,6 +9994,7 @@ function render() {
       ${payLaterMissingDialogHtml()}
       ${newSaleConfirmDialogHtml()}
       ${orderNumberDialogHtml()}
+      ${tableServiceModuleHtml()}
       ${orderTypeDraftDialogHtml()}
       ${cartItemEditorHtml()}
       ${itemQuickEditDialogHtml()}
@@ -9859,6 +10197,44 @@ function attachEvents() {
     });
   });
 
+  $('#mgrSecuritySave')?.addEventListener('click', () => {
+    const pinEnabled = (document.querySelector('#mgrSecurityPinEnabled') as HTMLInputElement)?.checked ?? true;
+    const idleTimerEnabled = (document.querySelector('#mgrSecurityIdleTimer') as HTMLInputElement)?.checked ?? false;
+    const timeoutInput = document.querySelector('#mgrSecurityTimeout') as HTMLInputElement | null;
+    const timeoutSeconds = timeoutInput ? clampSecurityTimeout(Number(timeoutInput.value)) : 300;
+    const existing = readManagerSettings();
+    const next = writeSecuritySettings(existing, {
+      pinCodeEnabled: pinEnabled,
+      screenIdleTimerEnabled: idleTimerEnabled,
+      screenTimeoutSeconds: timeoutSeconds
+    });
+    try {
+      localStorage.setItem(MANAGER_SETTINGS_STORE_KEY, JSON.stringify(next));
+      const msgEl = document.querySelector('#mgrSecuritySaveMessage') as HTMLElement | null;
+      if (msgEl) {
+        msgEl.textContent = 'Security settings saved successfully.';
+        msgEl.className = 'mgr-security-save-message ok';
+        msgEl.style.display = 'block';
+        setTimeout(() => { msgEl.style.display = 'none'; }, 3000);
+      }
+    } catch (err) {
+      console.error('Failed to save security settings:', err);
+      const msgEl = document.querySelector('#mgrSecuritySaveMessage') as HTMLElement | null;
+      if (msgEl) {
+        msgEl.textContent = 'Failed to save security settings.';
+        msgEl.className = 'mgr-security-save-message bad';
+        msgEl.style.display = 'block';
+        setTimeout(() => { msgEl.style.display = 'none'; }, 3000);
+      }
+    }
+    render();
+  });
+
+  $('#mgrCallerIdEnabled')?.addEventListener('change', (event) => {
+    setCallerIdEnabled((event.target as HTMLInputElement).checked);
+    render();
+  });
+
   $('#managerSettingsBtn')?.addEventListener('click', () => {
     if (state.managerUnlocked) {
       state.mainView = MAIN_VIEWS.managerSettings;
@@ -9946,6 +10322,12 @@ function attachEvents() {
 
   $('#mgrSectionBack')?.addEventListener('click', () => {
     state.managerSettingsSection = null;
+    render();
+  });
+
+  $('#tableServiceEnabledToggle')?.addEventListener('change', (e) => {
+    state.tableServiceEnabled = !!(e.target as HTMLInputElement).checked;
+    persistManagerSettings();
     render();
   });
 
@@ -10038,6 +10420,7 @@ function attachEvents() {
   });
 
   $('#toggleActivity')?.addEventListener('click', () => {
+    if (state.callerIdEnabled === false) return;
     state.activityOpen = !state.activityOpen;
     render();
   });
@@ -10051,6 +10434,7 @@ function attachEvents() {
   });
   document.querySelectorAll('[data-end-line]').forEach((b) => {
     b.addEventListener('click', () => {
+      if (state.callerIdEnabled === false) return;
       const lineNumber = Number(b.dataset.endLine);
       const line = getLine(lineNumber);
       if (line && line.state !== 'idle' && line.state !== 'ended') {
@@ -10064,6 +10448,7 @@ function attachEvents() {
 
   document.querySelectorAll('[data-line-tile]').forEach((b) => {
     b.addEventListener('click', () => {
+      if (state.callerIdEnabled === false) return;
       const lineNumber = Number(b.dataset.lineTile);
       const line = getLine(lineNumber);
       if (line?.state === 'ringing') {
@@ -10258,6 +10643,10 @@ function attachEvents() {
     });
   });
 
+  $('#openTableServiceBtn')?.addEventListener('click', (event) => {
+    event.preventDefault();
+    openTableServiceFromDraftDialog();
+  });
   $('#togoDraftName')?.addEventListener('input', (e) => {
     state.orderTypeDraftDialog.name = e.target.value;
   });
@@ -10279,6 +10668,13 @@ function attachEvents() {
     cancelOrderTypeDraftDialog();
     render();
   });
+
+  if (state.tableServiceOpen) {
+    const tableServiceController = getTableServiceController();
+    if (tableServiceController?.bind) {
+      tableServiceController.bind(document.getElementById('app'));
+    }
+  }
 
   $('#editCustomer')?.addEventListener('click', openCustomerEditor);
   $('#editTogoGuestDetails')?.addEventListener('click', () => {
@@ -11378,7 +11774,7 @@ function attachEvents() {
   $('#sendPayNow')?.addEventListener('click', () => sendOrderAction('pay_now'));
   $('#sendPayLater')?.addEventListener('click', () => sendOrderAction('pay_later'));
   $('#newSaleBtn')?.addEventListener('click', () => requestNewSale());
-  $('#cancelSaleBottom')?.addEventListener('click', clearTicket);
+  $('#cancelSaleBottom')?.addEventListener('click', () => requestNewSale());
   $('#newSaleGoBack')?.addEventListener('click', () => {
     state.showCancelConfirm = false;
     state.newSalePendingLineNumber = null;
@@ -11386,22 +11782,26 @@ function attachEvents() {
   });
   $('#newSaleContinue')?.addEventListener('click', cancelSaleConfirmed);
 
-  $('#orderPrintCustomer')?.addEventListener('click', () => printOrderNumberReceipt('customer_receipt'));
-  $('#orderPrintMerchant')?.addEventListener('click', () => printOrderNumberReceipt('merchant_copy'));
-  $('#orderNoReceipt')?.addEventListener('click', () => {
-    const source = state.orderNumberDialog.source;
-    closeOrderNumberDialog();
-    if (source === 'orders-management') {
-      state.mainView = MAIN_VIEWS.orders;
+  $('#orderPrintCustomer')?.addEventListener('click', async () => {
+    if (await printOrderNumberReceipt('customer_receipt')) {
+      closeOrderNumberDialogToSource();
+      render();
     }
-    render();
+  });
+  $('#orderPrintMerchant')?.addEventListener('click', async () => {
+    if (await printOrderNumberReceipt('merchant_copy')) {
+      closeOrderNumberDialogToSource();
+      render();
+    }
+  });
+  $('#orderPrintBoth')?.addEventListener('click', async () => {
+    if (await printOrderNumberReceiptBoth()) {
+      closeOrderNumberDialogToSource();
+      render();
+    }
   });
   $('#orderNumberDone')?.addEventListener('click', () => {
-    const source = state.orderNumberDialog.source;
-    closeOrderNumberDialog();
-    if (source === 'orders-management') {
-      state.mainView = MAIN_VIEWS.orders;
-    }
+    closeOrderNumberDialogToSource();
     render();
   });
 
@@ -11619,39 +12019,45 @@ function attachEvents() {
   }
 }
 
-hydrateManagerSettingsFromStorage();
-installKeyboardLifecycleEvents();
-keyboardController.setKeyboardMode(state.keyboardMode, { persist: false });
-render();
-loadFromDb();
+const directPrinterTestPath = window.location.pathname.replace(/\/+$/, '') || '/';
 
-window.addEventListener('beforeinstallprompt', (event) => {
-  event.preventDefault();
-  deferredInstallPrompt = event;
-  state.installAvailable = true;
-  state.pwaDiag.beforeInstallPrompt = true;
+if (directPrinterTestPath === '/direct-printer-test') {
+  window.LilposDirectPrinterTest?.render('app');
+} else {
+  hydrateManagerSettingsFromStorage();
+  installKeyboardLifecycleEvents();
+  keyboardController.setKeyboardMode(state.keyboardMode, { persist: false });
   render();
-});
+  loadFromDb();
 
-window.addEventListener('appinstalled', () => {
-  state.installed = true;
-  state.installAvailable = false;
-  deferredInstallPrompt = null;
-  render();
-});
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    updatePwaDiagnostics();
-    navigator.serviceWorker.register('./sw.js').then(() => {
-      state.pwaDiag.swRegistered = true;
-      updatePwaDiagnostics();
-      render();
-    }).catch((err) => {
-      state.pwaDiag.swRegistered = false;
-      console.error('Service worker registration failed:', err);
-      updatePwaDiagnostics();
-      render();
-    });
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    state.installAvailable = true;
+    state.pwaDiag.beforeInstallPrompt = true;
+    render();
   });
+
+  window.addEventListener('appinstalled', () => {
+    state.installed = true;
+    state.installAvailable = false;
+    deferredInstallPrompt = null;
+    render();
+  });
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      updatePwaDiagnostics();
+      navigator.serviceWorker.register('./sw.js').then(() => {
+        state.pwaDiag.swRegistered = true;
+        updatePwaDiagnostics();
+        render();
+      }).catch((err) => {
+        state.pwaDiag.swRegistered = false;
+        console.error('Service worker registration failed:', err);
+        updatePwaDiagnostics();
+        render();
+      });
+    });
+  }
 }

@@ -11,10 +11,16 @@ interface Window {
   LilposPrintJobService?: any;
   LilposPrintStatusService?: any;
   LilposPrinterSettings?: any;
+  LilposLilPrintClient?: any;
+  LilposEscposBuilder?: any;
+  LilposPrinterProfiles?: any;
   LilposOrdersManagement?: any;
   LilposLocalDataAdmin?: any;
   LilposStationDataManager?: any;
   LilposStationDataManagerView?: any;
+  LilposDirectPrinterTest?: {
+    render: (rootId?: string) => void;
+  };
   lilposDataService?: any;
   lilposLocalDataAdmin?: any;
 }

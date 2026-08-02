@@ -74,6 +74,28 @@ describe('LilPrint client v1 contract helpers', () => {
     expect(fetchImpl.mock.calls[1][0]).toBe('http://localhost:3030/v1/queue?appId=lilpos&printerId=p1');
   });
 
+  it('exposes the documented health endpoint', async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init?: any) => {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ ok: true, status: 'running', version: '1.0.0' }),
+        headers: { get: () => '' }
+      } as any;
+    });
+
+    const client = (window as any).LilposLilPrintClient.createLilPrintClient({
+      baseUrl: 'http://localhost:3030',
+      fetchImpl
+    });
+
+    const response = await client.getHealth();
+
+    expect(fetchImpl.mock.calls[0][0]).toBe('http://localhost:3030/health');
+    expect(response.status).toBe(200);
+    expect(response.data).toEqual({ ok: true, status: 'running', version: '1.0.0' });
+  });
+
   it('reads requestId and error details from error payload when headers are missing', async () => {
     const fetchImpl = vi.fn(async (_url: string, _init?: any) => {
       return {

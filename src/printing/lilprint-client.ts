@@ -129,6 +129,10 @@
         return baseUrl;
       },
 
+      getHealth: function() {
+        return request('/health');
+      },
+
       getAgent: function() {
         return request('/v1/agent');
       },
